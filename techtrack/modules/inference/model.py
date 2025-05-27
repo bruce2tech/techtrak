@@ -23,6 +23,8 @@ class Detector:
         :ivar self.img_width: Width of the input image/frame.
         """
         self.net = cv2.dnn.readNet(weights_path, config_path)
+        layer_names = self.net.getLayerNames()
+        self.output_layers = [layer_names[i - 1] for i in self.net.getUnconnectedOutLayers()]
 
         # Load class labels
         with open(class_path, "r") as f:
@@ -60,9 +62,16 @@ class Detector:
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
 
         # TASK 2: Use the YOLO model to return all raw outputs
-        
+
+        blob = cv2.dnn.blobFromImage(preprocessed_frame,
+                                     scalefactor = 1/255.,
+                                     size        = (self.img_height, self.img_width),
+                                     swapRB      = True,
+                                     crop        = False)
+        self.net.setInput(blob)
+        outputs = self.net.forward(self.output_layers)
         # Return model outputs:
-        # return outputs
+        return outputs
 
     def post_process(
         self, predict_output: List[np.ndarray]
@@ -109,9 +118,19 @@ class Detector:
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
         #         in Line 83-88.
+        bboxes, class_ids, confidence_scores, class_scores = [], [], [], []
+
+        # todo: implement self.score_threshold logic
+
+        for feature_maps in predict_output:
+            for detection in feature_maps:
+                bboxes.append(detection[:4])
+                confidence_scores.append(detection[4])
+                class_scores.append(detection[5:])
+                class_ids.append(np.argmax(class_scores[-1]))
 
         # Return these variables in order:
-        # return bboxes, class_ids, confidence_scores, class_scores
+        return bboxes, class_ids, confidence_scores, class_scores
 
 
 """

@@ -134,6 +134,8 @@ def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes
     y_true = []
     pred_scores = []
 
+    #todo
+
     ### Task 1: Evaluate detections by matching predicted bounding boxes 
     #           with ground truth boxes and generate corresponding true 
     #           labels and prediction scores for further evaluation (e.g., 
@@ -219,6 +221,7 @@ def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
     recall = {}
     thresholds = {}
 
+    # todo
     ### Task 2: Compute the precision-recall curve for each class 
     #           in a multi-class classification task. 
     #           Notes
