@@ -48,7 +48,7 @@ class Preprocessing:
         - OpenCV VideoCapture Documentation: 
           https://docs.opencv.org/4.x/dd/d43/tutorial_py_video_display.html
         """
-        # TASK 1: Modify file to yield only every `drop_rate`-th frame.
+        # TASK: Modify file to yield only every `drop_rate`-th frame.
         # HINT: When running in Docker avoid using:
         # -----------------------------
         # cv.imshow('frame', gray)

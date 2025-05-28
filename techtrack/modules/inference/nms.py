@@ -62,8 +62,8 @@ class NMS:
         ```
         """
 
-        # TASK 4: Apply Non-Maximum Suppression (NMS) to filter overlapping bounding boxes.
-        #         DO NOT USE **cv2.dnn.NMSBoxes()** for this Assignment. For Assignment 5, you will be
+        # TASK: Apply Non-Maximum Suppression (NMS) to filter overlapping bounding boxes.
+        #         DO NOT USE **cv2.dnn.NMSBoxes()** for this Assignment. For Assignment 2, you will be
         #         permitted to use this function.
         #
         # Return these variables in order as described in Line 46-50:

@@ -59,7 +59,7 @@ class Detector:
         """
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
 
-        # TASK 2: Use the YOLO model to return all raw outputs
+        # TASK: Use the YOLO model to return all raw outputs
         
         # Return model outputs:
         # return outputs
@@ -105,7 +105,7 @@ class Detector:
           https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob
         """
         
-        # TASK 3: Use the YOLO model to return list of NumPy arrays filtered
+        # TASK: Use the YOLO model to return list of NumPy arrays filtered
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
         #         in Line 83-88.

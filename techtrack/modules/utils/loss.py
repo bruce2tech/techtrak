@@ -34,35 +34,12 @@ class Loss:
         self.lambda_noobj = lambda_noobj
         self.columns = [
             'total_loss', 
-            f'loc_loss (lambda={self.lambda_coord})', 
+            'loc_loss', 
             'conf_loss_obj', 
-            f'conf_loss_noobj (lambda={self.lambda_noobj})', 
+            'conf_loss_noobj', 
             'class_loss'
         ]
         self.iou_threshold = iou_threshold
-
-    def cross_entropy_loss(self, y_true, y_pred, epsilon=1e-12):
-        """
-        Compute the cross entropy loss between true labels and predicted probabilities.
-
-        Args:
-            y_true (numpy array): True labels, one-hot encoded or binary labels.
-            y_pred (numpy array): Predicted probabilities, same shape as y_true.
-            epsilon (float): Small value to avoid log(0). Default is 1e-12.
-
-        Returns:
-            float: Cross entropy loss.
-        """
-        # Clip y_pred to avoid log(0)
-        y_pred = np.clip(y_pred, epsilon, 1. - epsilon)
-
-        # Binary classification case
-        if y_true.ndim == 1 or y_true.shape[1] == 1:
-            loss = -np.mean(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
-        # Multi-class classification case
-        else:
-            loss = -np.mean(np.sum(y_true * np.log(y_pred), axis=1))
-        return loss
     
     def get_predictions(self, predictions):
         """
@@ -115,21 +92,22 @@ class Loss:
         """
         loc_loss = 0 # localization loss
         class_loss = 0 # classification loss
-        conf_loss_obj = 0 # objectness (or confidence) loss
-        total_loss = 0 # aggregate loss including loc_loss, class_loss, conf_loss_obj
+        conf_loss_obj = 0 # with object (or confidence) loss
+        conf_loss_noobj = 0 # no object (or confidence) loss
+        total_loss = 0 # aggregate loss including loc_loss, class_loss, conf_loss_obj, etc.
 
-        # TASK 2: Complete this method to compute the Loss function.
+        # TASK: Complete this method to compute the Loss function.
         #         This method calculates the localization, objectness 
         #         (or confidence) and classification loss.
         #         This method will be called in the HardNegativeMiner class.
         #         ----------------------------------------------------------
         #         HINT: For simplicity complete use get_predictions(), get_annotations().
         #         You may add class methods to improve the readability of this code. 
-        #         For your convenience, cross_entropy_loss() is already implemented for you.
 
         return {
+            "total_loss": total_loss, 
             "loc_loss": loc_loss, 
             "conf_loss_obj": conf_loss_obj, 
-            "class_loss": class_loss,
-            "total_loss": total_loss, 
+            "conf_loss_noobj": conf_loss_noobj, 
+            "class_loss": class_loss
         }
