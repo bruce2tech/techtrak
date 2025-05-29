@@ -23,6 +23,8 @@ class Detector:
         :ivar self.img_width: Width of the input image/frame.
         """
         self.net = cv2.dnn.readNet(weights_path, config_path)
+        layer_names = self.net.getLayerNames()
+        self.output_layers = [layer_names[i - 1] for i in self.net.getUnconnectedOutLayers()]
 
         # Load class labels
         with open(class_path, "r") as f:
@@ -59,10 +61,18 @@ class Detector:
         """
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
 
-        # TASK: Use the YOLO model to return all raw outputs
-        
+
+        # TASK 2: Use the YOLO model to return all raw outputs
+
+        blob = cv2.dnn.blobFromImage(preprocessed_frame,
+                                     scalefactor = 1/255.,
+                                     size        = (self.img_height, self.img_width),
+                                     swapRB      = True,
+                                     crop        = False)
+        self.net.setInput(blob)
+        outputs = self.net.forward(self.output_layers)
         # Return model outputs:
-        # return outputs
+        return outputs
 
     def post_process(
         self, predict_output: List[np.ndarray]
@@ -109,9 +119,27 @@ class Detector:
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
         #         in Line 83-88.
+        raw_boxes, class_ids, confidence_scores, class_scores = [], [], [], []
+
+        # Discard low-threshold detections
+        for feature_maps in predict_output:
+            for detection in feature_maps:
+                if detection[4] > self.score_threshold:
+                    raw_boxes.append(detection[:4])
+                    confidence_scores.append(detection[4])
+                    class_scores.append(detection[5:])
+                    class_ids.append(np.argmax(class_scores[-1]))
+
+        # Convert box coordinates
+        bboxes = []
+        for box in raw_boxes:
+            center_x, center_y, width, height = box
+            x = center_x - width  / 2.
+            y = center_y - height / 2.
+            bboxes.append([x, y, width, height])
 
         # Return these variables in order:
-        # return bboxes, class_ids, confidence_scores, class_scores
+        return bboxes, class_ids, confidence_scores, class_scores
 
 
 """
@@ -126,3 +154,42 @@ bboxes, class_ids, confidence_scores, class_scores = self.detector.post_process(
     predictions
 )
 """
+
+if __name__ == "__main__":
+    ## Test the detector on an image
+    ## See https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob for more information
+    ## Note: Requires non-headless version of OpenCV
+
+    ## Initialize model
+    weights_path = "../../storage/yolo_models/yolo_model_1/yolov4-tiny-logistics_size_416_1.weights"
+    config_path  = "../../storage/yolo_models/yolo_model_1/yolov4-tiny-logistics_size_416_1.cfg"
+    class_path   = "../../storage/yolo_models/yolo_model_1/logistics.names"
+    score_threshold = .5
+
+    model = Detector(weights_path    = weights_path,
+                     config_path     = config_path,
+                     class_path      = class_path,
+                     score_threshold = score_threshold)
+
+    # Load sample frame
+    frame_path   = "../../storage/logistics/p1_8760_jpg.rf.f174b5ef18011cac19021f9df63ecb7c.jpg"
+    frame        = cv2.imread(frame_path)
+
+    # Run sample prediction
+    predictions = model.predict(frame)
+    bboxes, class_ids, confidence_scores, class_scores = model.post_process(predictions)
+
+    # Visualize (see https://matplotlib.org/stable/api/_as_gen/matplotlib.patches.Rectangle.html)
+    from matplotlib import pyplot as plt
+    from matplotlib.patches import Rectangle
+    fig, ax = plt.subplots(1)
+    ax.imshow(frame)
+    for bbox in bboxes:
+        x, y, width, height = bbox
+        x, y, width, height = (int(x*model.img_width),
+                               int(y*model.img_height),
+                               int(width*model.img_width),
+                               int(height*model.img_height))
+        r = Rectangle((x, y), width, height, facecolor="none", edgecolor="r")
+        ax.add_patch(r)
+    plt.show()
