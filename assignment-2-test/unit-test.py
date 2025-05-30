@@ -1,12 +1,372 @@
-
+import os
+import tempfile
 import unittest
 import numpy as np
+import cv2
 import inspect
+from unittest.mock import patch, MagicMock
 
 
+# Replace these with your actual module paths.
+from modules.inference.nms import NMS
+from modules.inference.model import Detector
 from modules.utils import metrics
 
+###############################################################################
+# Tests for Detector (-5pts for each failed test)
+###############################################################################
+class TestDetector(unittest.TestCase):
+    def setUp(self):
+        # Create a temporary file for class labels.
+        self.temp_class_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t")
+        # Write a few class labels.
+        self.classes = ["barcode",
+                        "car",
+                        "cardboard box",
+                        "fire",
+                        "forklift",
+                        "freight container",
+                        "gloves",
+                        "helmet",
+                        "ladder",
+                        "license plate",
+                        "person",
+                        "qr code",
+                        "road sign",
+                        "safety vest",
+                        "smoke",
+                        "traffic cone",
+                        "traffic light",
+                        "truck",
+                        "van",
+                        "wood pallet"]
+        self.temp_class_file.write("\n".join(self.classes))
+        self.temp_class_file.flush()
+        self.temp_class_file.close()
 
+    def tearDown(self):
+        os.unlink(self.temp_class_file.name)
+
+    def test_predict_with_empty_frame_raises_error(self):
+        """
+        Test that passing an empty frame to predict raises an error.
+        
+        Code used:
+            dummy_frame = np.empty((0, 0, 3), dtype=np.uint8)
+            with patch("cv2.dnn.readNet") as mock_readNet:
+                dummy_net = MagicMock()
+                dummy_net.getLayerNames.return_value = []
+                dummy_net.forward.return_value = []
+                mock_readNet.return_value = dummy_net
+                detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                                      "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                                      self.temp_class_file.name, score_threshold=0.5)
+                detector.predict(dummy_frame)
+        """
+        code_used = TestDetector.test_predict_with_empty_frame_raises_error.__doc__
+        dummy_frame = np.empty((0, 0, 3), dtype=np.uint8)
+        with patch("cv2.dnn.readNet") as mock_readNet:
+            dummy_net = MagicMock()
+            dummy_net.getLayerNames.return_value = []
+            dummy_net.forward.return_value = []
+            mock_readNet.return_value = dummy_net
+
+            detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                                  "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                                  self.temp_class_file.name, score_threshold=0.5)
+            with self.assertRaises(Exception, msg=f"\nTest: test_predict_with_empty_frame_raises_error\nFunction: predict()\nError: An empty frame must raise an error.\nCode used:\n{code_used}\n"):
+                detector.predict(dummy_frame)
+
+    def test_post_process_filters_and_converts_detections(self):
+        """
+        Test that post_process correctly converts bounding boxes from center-based
+        to top-left corner format and filters detections based on score_threshold.
+        
+        Code used:
+            detector.img_width = 400
+            detector.img_height = 300
+            detection1 = np.array([0.5, 0.5, 0.2, 0.2, 0.9, 0.1, 0.8, 0.05])
+            detection2 = np.array([0.3, 0.3, 0.1, 0.1, 0.9, 0.2, 0.1, 0.3])
+            predict_output = [np.array([detection1, detection2])]
+            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
+        """
+        code_used = TestDetector.test_post_process_filters_and_converts_detections.__doc__
+        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                            self.temp_class_file.name, score_threshold=0.5)
+        detector.img_width = 400
+        detector.img_height = 300
+
+        detection1 = np.array([0.5, 0.5, 0.2, 0.2, 0.9, 0.1, 0.8, 0.05])
+        detection2 = np.array([0.3, 0.3, 0.1, 0.1, 0.1, 0.2, 0.1, 0.3])
+        predict_output = [np.array([detection1, detection2])]
+
+        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output)
+
+        print(class_scores)
+
+        expected_bbox = [160, 120, 80, 60]
+        expected_class_id = 1  # argmax of [0.1, 0.8, 0.05] is index 1.
+        expected_confidence = 0.8
+        expected_class_scores = detection1[5:]
+
+        self.assertEqual(len(bboxes), 1,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected exactly 1 bounding box, got {}.\nCode used:\n{}\n******\n".format(len(bboxes), code_used))
+        self.assertEqual(len(class_ids), 1,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected exactly 1 class ID, got {}.\nCode used:\n{}\n******\n".format(len(class_ids), code_used))
+        self.assertEqual(len(confidence_scores), 1,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected exactly 1 confidence score, got {}.\nCode used:\n{}\n******\n".format(len(confidence_scores), code_used))
+        self.assertEqual(len(class_scores), 1,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected exactly 1 set of class scores, got {}.\nCode used:\n{}\n******\n".format(len(class_scores), code_used))
+
+        self.assertEqual(bboxes[0], expected_bbox,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected bounding box {} but got {}.\nCode used:\n{}\n******\n".format(expected_bbox, bboxes[0], code_used))
+        self.assertEqual(class_ids[0], expected_class_id,
+                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                         "Error: Expected class ID {} but got {}.\nCode used:\n{}\n******\n".format(expected_class_id, class_ids[0], code_used))
+        self.assertAlmostEqual(confidence_scores[0], expected_confidence,
+                               msg="\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                                   "Error: Expected confidence score {} but got {}.\nCode used:\n{}\n******\n".format(expected_confidence, confidence_scores[0], code_used))
+        np.testing.assert_array_equal(class_scores[0], expected_class_scores,
+                                      err_msg="\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
+                                              "Error: The class scores do not match expected values.\nCode used:\n" + code_used + "\n******\n")
+
+    def test_post_process_detection_equal_threshold(self):
+        """
+        Test that a detection with confidence exactly equal to the threshold
+        is filtered out (since the condition is strictly greater than the threshold).
+        
+        Code used:
+            detector.img_width = 400
+            detector.img_height = 300
+            detection = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.5, 0.05])
+            predict_output = [np.array([detection])]
+            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output)
+        """
+        code_used = TestDetector.test_post_process_detection_equal_threshold.__doc__
+        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                            self.temp_class_file.name, score_threshold=0.5)
+        detector.img_width = 400
+        detector.img_height = 300
+
+        detection = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.5, 0.05])
+        predict_output = [np.array([detection])]
+
+        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output)
+        self.assertGreaterEqual(bboxes, [],
+                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
+                         "Error: Expected no bounding boxes when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
+        self.assertGreaterEqual(class_ids, [],
+                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
+                         "Error: Expected no class IDs when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
+        self.assertGreaterEqual(confidence_scores, [],
+                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
+                         "Error: Expected no confidence scores when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
+        self.assertGreaterEqual(class_scores, [],
+                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
+                         "Error: Expected no class scores when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
+
+    def test_post_process_multiple_outputs(self):
+        """
+        Test that post_process correctly aggregates detections when multiple outputs
+        are provided.
+        
+        Code used:
+            detector.img_width = 400
+            detector.img_height = 300
+            detection1 = np.array([0.4, 0.4, 0.2, 0.2, 0.0, 0.05, 0.7, 0.1])
+            detection2 = np.array([0.6, 0.6, 0.1, 0.1, 0.0, 0.2, 0.6, 0.1])
+            predict_output = [np.array([detection1]), np.array([detection2])]
+            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output)
+        """
+        code_used = TestDetector.test_post_process_multiple_outputs.__doc__
+        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                            self.temp_class_file.name, score_threshold=0.5)
+        detector.img_width = 400
+        detector.img_height = 300
+
+        detection1 = np.array([0.4, 0.4, 0.2, 0.2, 0.9, 0.05, 0.7, 0.1])
+        detection2 = np.array([0.6, 0.6, 0.1, 0.1, 0.9, 0.2, 0.6, 0.1])
+        predict_output = [np.array([detection1]), np.array([detection2])]
+
+        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output)
+
+        expected_bbox1 = [120, 90, 80, 60]   # detection1
+        expected_bbox2 = [220, 165, 40, 30]  # detection2
+
+        self.assertEqual(len(bboxes), 2,
+                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
+                         "Error: Expected 2 bounding boxes but got {}.\nCode used:\n{}\n******\n".format(len(bboxes), code_used))
+        self.assertEqual(bboxes[0], expected_bbox1,
+                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
+                         "Error: Expected bounding box {} for detection1 but got {}.\nCode used:\n{}\n******\n".format(expected_bbox1, bboxes[0], code_used))
+        self.assertEqual(bboxes[1], expected_bbox2,
+                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
+                         "Error: Expected bounding box {} for detection2 but got {}.\nCode used:\n{}\n******\n".format(expected_bbox2, bboxes[1], code_used))
+        self.assertEqual(class_ids, [1, 1],
+                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
+                         "Error: Expected class IDs [1, 1] but got {}.\nCode used:\n{}\n******\n".format(class_ids, code_used))
+        self.assertAlmostEqual(confidence_scores[0], 0.7,
+                               msg="\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
+                                   "Error: Expected confidence score 0.7 for detection1 but got {}.\nCode used:\n{}\n******\n".format(confidence_scores[0], code_used))
+
+    def test_detector_with_empty_class_file(self):
+        """
+        Test that when the class file is empty, the detector's classes list is empty.
+        
+        Code used:
+            Create an empty temporary file and pass its name to Detector.
+        """
+        code_used = TestDetector.test_detector_with_empty_class_file.__doc__
+        with tempfile.NamedTemporaryFile(delete=False, mode="w+t") as empty_file:
+            empty_file_name = empty_file.name
+        try:
+            detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
+                                "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
+                                empty_file_name, score_threshold=0.5)
+            self.assertEqual(detector.classes, [],
+                             "\n******\nTest: test_detector_with_empty_class_file\nFunction: __init__()\n"
+                             "Error: Expected detector.classes to be empty when class file is empty.\nCode used:\n{}\n******\n".format(code_used))
+        finally:
+            os.unlink(empty_file_name)
+
+###############################################################################
+# Tests for NMS (-5pts for each failed test)
+###############################################################################
+class TestNMS(unittest.TestCase):
+    @patch("cv2.dnn.NMSBoxes")
+    def test_filter_with_valid_indices(self, mock_nms):
+        """
+        We need to verify that when NMS returns valid indices, the filter method 
+        correctly maps them to the corresponding bounding boxes, class IDs, scores, 
+        and class-specific scores.
+        
+        Code used:
+            bboxes = [[10,10,100,100], [20,20,80,80], [15,15,90,90], [200,200,50,50]]
+            class_ids = [0, 1, 0, 2]
+            scores = [0.9, 0.75, 0.85, 0.95]
+            class_scores = [0.8, 0.6, 0.7, 0.9]
+            mock_nms.return_value = np.array([[0], [2]])
+            filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+        """
+        code_used = TestNMS.test_filter_with_valid_indices.__doc__
+        bboxes = [
+            [10, 10, 100, 100],
+            [20, 20, 80, 80],
+            [15, 15, 90, 90],
+            [200, 200, 50, 50],
+        ]
+        class_ids = [0, 1, 0, 2]
+        scores = [0.9, 0.75, 0.85, 0.95]
+        class_scores = [0.8, 0.6, 0.7, 0.9]
+
+        mock_nms.return_value = np.array([[0], [2]])
+
+        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
+        filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+
+        expected_bboxes = [bboxes[0], bboxes[2]]
+        expected_class_ids = [class_ids[0], class_ids[2]]
+        expected_scores = [scores[0], scores[2]]
+        expected_class_scores = [class_scores[0], class_scores[2]]
+
+        self.assertEqual(
+            {tuple(x) for x in filtered[0]}, {tuple(x) for x in expected_bboxes},
+            f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Filtered bounding boxes do not match expected values.\nCode used:\n{code_used}\nExpected filtered_bboxes = {expected_bboxes}\nBut got: {filtered[0]}\n"""
+        )
+        self.assertEqual(
+            set(filtered[1]), set(expected_class_ids),
+            f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Filtered class IDs do not match expected values.\nCode used:\n{code_used}\nExpected class IDs = {expected_class_ids}\nBut got: {filtered[1]}\n"""
+        )
+        for a, b in zip(sorted(filtered[2]), sorted(expected_scores)):
+            self.assertAlmostEqual(a, b, places=2,
+                                    msg=f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Detection scores mismatch.\nCode used:\n{code_used}\nExpected scores = {expected_scores}\nBut got: {filtered[2]}\nExpected score {b:.3f} but got {a:.3f}.\n""")
+        for a, b in zip(sorted(filtered[3]), sorted(expected_class_scores)):
+            self.assertAlmostEqual(a, b, places=2,
+                                    msg=f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Class-specific scores mismatch.\nCode used:\n{code_used}\nExpected class scores = {expected_class_scores}\nBut got: {filtered[3]}\nExpected class score {b:.3f} but got {a:.3f}.\n""")
+
+    @patch("cv2.dnn.NMSBoxes")
+    def test_filter_with_empty_indices(self, mock_nms):
+        """
+        Verify that if cv2.dnn.NMSBoxes returns no indices, the filter method returns empty lists.
+        
+        Code used:
+            bboxes = [[10,10,100,100], [20,20,80,80]]
+            class_ids = [0, 1]
+            scores = [0.3, 0.4]
+            class_scores = [0.2, 0.3]
+            mock_nms.return_value = []
+            result = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+        """
+        code_used = TestNMS.test_filter_with_empty_indices.__doc__
+        bboxes = [[10, 10, 100, 100], [20, 20, 80, 80]]
+        class_ids = [0, 1]
+        scores = [0.3, 0.4]
+        class_scores = [0.2, 0.3]
+
+        mock_nms.return_value = []
+        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
+        result = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+        self.assertEqual(result, ([], [], [], []),
+                         f"""\nTest: test_filter_with_empty_indices\nFunction: filter()\nError: When NMSBoxes returns no indices, expected output ([], [], [], []), but got {result}.\nCode used:\n{code_used}\n""")
+
+    @patch("cv2.dnn.NMSBoxes")
+    def test_filter_with_single_index(self, mock_nms):
+        """
+        Verify that when a single index is returned, the filter method correctly returns that detection.
+        
+        Code used:
+            bboxes = [[10,10,50,50], [12,12,48,48]]
+            class_ids = [0, 0]
+            scores = [0.95, 0.94]
+            class_scores = [0.9, 0.88]
+            mock_nms.return_value = np.array([[0]])
+            filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+        """
+        code_used = TestNMS.test_filter_with_single_index.__doc__
+        bboxes = [[10, 10, 50, 50], [12, 12, 48, 48]]
+        class_ids = [0, 0]
+        scores = [0.95, 0.94]
+        class_scores = [0.9, 0.88]
+
+        mock_nms.return_value = np.array([[0]])
+        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
+        filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
+        self.assertEqual(filtered[0], [bboxes[0]],
+                         f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected bounding box {bboxes[0]} but got {filtered[0]}.\nCode used:\n{code_used}\n""")
+        self.assertEqual(filtered[1], [class_ids[0]],
+                         f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected class ID {class_ids[0]} but got {filtered[1]}.\nCode used:\n{code_used}\n""")
+        for a, b in zip(sorted(filtered[2]), sorted([scores[0]])):
+            self.assertAlmostEqual(a, b, places=2,
+                                    msg=f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected score {scores[0]:.3f} but got {a:.3f}.\nCode used:\n{code_used}\n""")
+        for a, b in zip(sorted(filtered[3]), sorted([class_scores[0]])):
+            self.assertAlmostEqual(a, b, places=2,
+                                    msg=f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected class-specific score {class_scores[0]:.3f} but got {a:.3f}.\nCode used:\n{code_used}\n""")
+
+    def test_filter_with_empty_input_lists(self):
+        """
+        Verify that empty input lists result in empty output lists.
+        
+        Code used:
+            result = nms_instance.filter([], [], [], [])
+        Expected output: ([], [], [], []).
+        """
+        code_used = TestNMS.test_filter_with_empty_input_lists.__doc__
+        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
+        self.assertEqual(nms_instance.filter([], [], [], []), ([], [], [], []),
+                         f"""\nTest: test_filter_with_empty_input_lists\nFunction: filter()\nError: Empty input lists should yield empty output lists.\nCode used:\n{code_used}\n""")
+
+
+###############################################################################
+# Tests for mAP (-5pts for each failed test)
+###############################################################################
 class TestMAP(unittest.TestCase):
     def setUp(self):
         # Set up for a 20-class object detection problem
@@ -143,8 +503,6 @@ class TestMAP(unittest.TestCase):
         }
 
         self.baseline_map = metrics.calculate_map_x_point_interpolated(precision_recall_points, num_classes)
-
-        print("Baseline:", self.baseline_map)
 
     def test_mAP_values_between_zero_and_one(self):
         error_message = "\n\n>>> Value Error: mAP should be between zero and one (e.g, [0, 1])."
@@ -648,7 +1006,7 @@ class TestMAP(unittest.TestCase):
         ]
 
         classes = [
-            [0, 1, 3],    # Image 1: extra detection with class 3 (false positive)
+            [0, 1, 3, 3],    # Image 1: extra detection with class 3 (false positive)
             [3, 4, 6],       # Image 2: last prediction misclassified (should be 5, but predicted as 6)
             [6, 7, 8],       # Image 3: all correct
             [9, 10, 11],     # Image 4: all correct
@@ -677,10 +1035,15 @@ class TestMAP(unittest.TestCase):
             [0.90, 0.88, 0.85, 0.82, 0.80]  # Image 6 dummy scores
         ]
 
-        cls_scores = [
-            np.eye(num_classes)[np.array(class_list)] * np.array(score_list)[:,None]
-            for class_list, score_list in zip(classes, dummy_max_cls_scores)
-        ]
+        # cls_scores = [
+        #     np.eye(num_classes)[np.array(class_list)] * np.array(score_list)[:,None]
+        #     for class_list, score_list in zip(classes, dummy_max_cls_scores)
+        # ]
+
+        
+        cls_scores =[np.eye(num_classes)[np.array(class_list)] * np.array(score_list)[:,None]
+                for class_list, score_list in zip(classes, dummy_max_cls_scores)
+            ]
 
        # ------------------------------------------------------------------------------
         # Evaluation
@@ -991,5 +1354,3 @@ class TestMAP(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-

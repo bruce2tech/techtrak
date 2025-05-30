@@ -1,16 +1,534 @@
-import os
-import glob
-import tempfile
 import unittest
+from unittest import mock
+import glob
+import os
+import tempfile
+import pandas as pd
 import numpy as np
 import cv2
 from unittest.mock import patch, MagicMock
 
-# Replace these with your actual module paths.
-from modules.inference.preprocessing import Preprocessing
-from modules.inference.nms import NMS
 from modules.inference.model import Detector
+from modules.inference.nms import NMS
+from modules.utils.loss import Loss  
+from modules.rectification.hard_negative_mining import HardNegativeMiner
+from modules.inference.preprocessing import Preprocessing
 
+###############################################################################
+# Tests for Loss (-5pts for each failed test)
+###############################################################################
+class TestLoss(unittest.TestCase):
+    def setUp(self):
+        # Use a smaller number of classes for easier testing.
+        self.loss = Loss(iou_threshold=0.5, lambda_coord=0.5, lambda_noobj=0.5, num_classes=3)
+
+    def test_get_predictions(self):
+        """
+        Test get_predictions() with dummy prediction data.
+        Expected:
+          - Two predictions (one per image).
+          - Each prediction list: [x1, y1, x2, y2, objectness, class_score_0, class_score_1, class_score_2].
+          - Example:
+              Image 1: [10, 10, 20, 20, 0.9, 0.1, 0.9, 0.0]
+              Image 2: [30, 30, 40, 40, 0.8, 0.7, 0.1, 0.2]
+        """
+        # Get the test description including code snippet (if any) from the docstring.
+        code_used = TestLoss.test_get_predictions.__doc__
+        predictions = [
+            [[10, 10, 20, 20, 0.9, 0.1, 0.9, 0.0]],
+            [[30, 30, 40, 40, 0.8, 0.7, 0.1, 0.2]]
+        ]
+        pred_box, objectness_score, class_scores = self.loss.get_predictions(predictions)
+        
+        self.assertEqual(
+            pred_box.shape, (2, 4),
+            "\n******\nTest: test_get_predictions\nFunction: get_predictions()\n"
+            "Error: Expected predicted boxes shape to be (2,4) for input predictions = {}\n"
+            "Got shape: {} with boxes: {}\nPlease check the box extraction logic.\n"
+            "Code used:\n{}\n******\n".format(predictions, pred_box.shape, pred_box, code_used)
+        )
+        self.assertEqual(
+            objectness_score.shape, (2,),
+            "\n******\nTest: test_get_predictions\nFunction: get_predictions()\n"
+            "Error: Expected objectness scores shape to be (2,) for input predictions = {}\n"
+            "Got shape: {} with scores: {}\nPlease review the objectness extraction logic.\n"
+            "Code used:\n{}\n******\n".format(predictions, objectness_score.shape, objectness_score, code_used)
+        )
+        self.assertEqual(
+            class_scores.shape, (2, 3),
+            "\n******\nTest: test_get_predictions\nFunction: get_predictions()\n"
+            "Error: Expected class scores shape to be (2,3) for input predictions = {}\n"
+            "Got shape: {} with class scores: {}\nPlease verify the class score extraction.\n"
+            "Code used:\n{}\n******\n".format(predictions, class_scores.shape, class_scores, code_used)
+        )
+
+    def test_get_annotations(self):
+        """
+        Test get_annotations() with dummy annotation data.
+        Expected:
+          - Two annotations in the form: [class_id, x1, y1, x2, y2].
+          - Example:
+              Annotation 1: [1, 10, 10, 20, 20]
+              Annotation 2: [0, 30, 30, 40, 40]
+        """
+        code_used = TestLoss.test_get_annotations.__doc__
+        annotations = [
+            [1, 10, 10, 20, 20],
+            [0, 30, 30, 40, 40]
+        ]
+        gt_box, gt_class_id = self.loss.get_annotations(annotations)
+        
+        self.assertEqual(
+            gt_box.shape, (2, 4),
+            "\n******\nTest: test_get_annotations\nFunction: get_annotations()\n"
+            "Error: Expected ground truth boxes shape to be (2,4) for input annotations = {}\n"
+            "Got shape: {} with boxes: {}\nPlease check annotation parsing for boxes.\n"
+            "Code used:\n{}\n******\n".format(annotations, gt_box.shape, gt_box, code_used)
+        )
+        self.assertEqual(
+            gt_class_id.shape, (2,),
+            "\n******\nTest: test_get_annotations\nFunction: get_annotations()\n"
+            "Error: Expected ground truth class IDs shape to be (2,) for input annotations = {}\n"
+            "Got shape: {} with class IDs: {}\nPlease verify the extraction of class IDs from annotations.\n"
+            "Code used:\n{}\n******\n".format(annotations, gt_class_id.shape, gt_class_id, code_used)
+        )
+
+    def test_compute_loss(self):
+        """
+        Test compute() with a simple matching prediction and annotation.
+        Expected:
+          - Prediction: [10, 10, 20, 20, 0.9, 0.7, 0.3, 0.0]
+          - Annotation: [0, 10, 10, 20, 20] (class 0, matching the box)
+          - All loss components (total_loss, loc_loss, conf_loss_obj, conf_loss_noobj, class_loss) must be non-negative.
+        """
+        code_used = TestLoss.test_compute_loss.__doc__
+        predictions = [
+            [[10, 10, 20, 20, 0.9, 0.7, 0.3, 0.0]]
+        ]
+        annotations = [
+            [0, 10, 10, 20, 20]
+        ]
+        losses = self.loss.compute(predictions, annotations)
+        
+        for key in losses:
+            self.assertGreaterEqual(
+                losses[key], 0,
+                "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+                "Error: Expected loss component '{}' to be non-negative for inputs:\n"
+                "predictions = {}\nannotations = {}\nGot {}.\nPlease inspect the loss computation for {}.\n"
+                "Code used:\n{}\n******\n".format(key, predictions, annotations, losses[key], key, code_used)
+            )
+        self.assertIn(
+            "total_loss", losses,
+            "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+            "Error: Expected key 'total_loss' in losses dictionary for inputs:\n"
+            "predictions = {}\nannotations = {}\nGot keys: {}.\nPlease verify the loss aggregation.\n"
+            "Code used:\n{}\n******\n".format(predictions, annotations, list(losses.keys()), code_used)
+        )
+        self.assertIn(
+            "loc_loss", losses,
+            "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+            "Error: Expected key 'loc_loss' in losses dictionary for inputs:\n"
+            "predictions = {}\nannotations = {}\nGot keys: {}.\nCheck localization loss computation.\n"
+            "Code used:\n{}\n******\n".format(predictions, annotations, list(losses.keys()), code_used)
+        )
+        self.assertIn(
+            "conf_loss_obj", losses,
+            "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+            "Error: Expected key 'conf_loss_obj' in losses dictionary for inputs:\n"
+            "predictions = {}\nannotations = {}\nGot keys: {}.\nReview objectness loss for true detections.\n"
+            "Code used:\n{}\n******\n".format(predictions, annotations, list(losses.keys()), code_used)
+        )
+        self.assertIn(
+            "conf_loss_noobj", losses,
+            "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+            "Error: Expected key 'conf_loss_noobj' in losses dictionary for inputs:\n"
+            "predictions = {}\nannotations = {}\nGot keys: {}.\nReview no-object loss computation.\n"
+            "Code used:\n{}\n******\n".format(predictions, annotations, list(losses.keys()), code_used)
+        )
+        self.assertIn(
+            "class_loss", losses,
+            "\n******\nTest: test_compute_loss\nFunction: compute()\n"
+            "Error: Expected key 'class_loss' in losses dictionary for inputs:\n"
+            "predictions = {}\nannotations = {}\nGot keys: {}.\nVerify class loss calculation.\n"
+            "Code used:\n{}\n******\n".format(predictions, annotations, list(losses.keys()), code_used)
+        )
+
+    def test_compute_loss_increases_with_lower_class_prediction(self):
+        """
+        Test that compute() yields a higher total loss when the predicted probability for the correct class decreases.
+        Example:
+          - Scenario A (High confidence): [10,10,20,20,0.9,0.8,0.1,0.1]
+          - Scenario B (Low confidence): [10,10,20,20,0.9,0.3,0.35,0.35]
+        Expected:
+          - Total loss and class loss in Scenario B must be greater than in Scenario A.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          predictions_A = [[[10, 10, 20, 20, 0.9, 0.8, 0.1, 0.1]]]
+          predictions_B = [[[10, 10, 20, 20, 0.9, 0.3, 0.35, 0.35]]]
+        """
+        code_used = TestLoss.test_compute_loss_increases_with_lower_class_prediction.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        predictions_A = [[[10, 10, 20, 20, 0.9, 0.8, 0.1, 0.1]]]
+        predictions_B = [[[10, 10, 20, 20, 0.9, 0.3, 0.35, 0.35]]]
+        loss_A = self.loss.compute(predictions_A, annotations)
+        loss_B = self.loss.compute(predictions_B, annotations)
+        
+        self.assertGreater(
+            loss_B["total_loss"], loss_A["total_loss"],
+            "\n******\nTest: test_compute_loss_increases_with_lower_class_prediction\nFunction: compute()\n"
+            "Error: Expected total_loss in Scenario B ({}) to be greater than in Scenario A ({}).\n"
+            "Inputs:\nannotations = {}\npredictions_A = {}\npredictions_B = {}\nReview class probability impact on loss.\n"
+            "Code used:\n{}\n******\n".format(loss_B["total_loss"], loss_A["total_loss"], annotations, predictions_A, predictions_B, code_used)
+        )
+        self.assertGreater(
+            loss_B["class_loss"], loss_A["class_loss"],
+            "\n******\nTest: test_compute_loss_increases_with_lower_class_prediction\nFunction: compute()\n"
+            "Error: Expected class_loss in Scenario B ({}) to exceed that in Scenario A ({}).\n"
+            "Inputs:\nannotations = {}\npredictions_A = {}\npredictions_B = {}\nCheck class prediction handling.\n"
+            "Code used:\n{}\n******\n".format(loss_B["class_loss"], loss_A["class_loss"], annotations, predictions_A, predictions_B, code_used)
+        )
+
+    def test_compute_loss_increases_when_objectness_decreases(self):
+        """
+        Test that compute() yields a higher loss when the objectness score decreases for a true detection.
+        Example:
+          - High objectness: [10,10,20,20,0.9,0.9,0.05,0.05]
+          - Low objectness:  [10,10,20,20,0.3,0.9,0.05,0.05]
+        Expected:
+          - Lower objectness should yield a higher objectness loss and higher total loss.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          predictions_high_obj = [[[10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]]]
+          predictions_low_obj = [[[10, 10, 20, 20, 0.3, 0.9, 0.05, 0.05]]]
+        """
+        code_used = TestLoss.test_compute_loss_increases_when_objectness_decreases.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        predictions_high_obj = [[[10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]]]
+        predictions_low_obj = [[[10, 10, 20, 20, 0.3, 0.9, 0.05, 0.05]]]
+        loss_high = self.loss.compute(predictions_high_obj, annotations)
+        loss_low = self.loss.compute(predictions_low_obj, annotations)
+        
+        self.assertGreater(
+            loss_low["total_loss"], loss_high["total_loss"],
+            "\n******\nTest: test_compute_loss_increases_when_objectness_decreases\nFunction: compute()\n"
+            "Error: Expected total_loss with low objectness ({}) to be greater than with high objectness ({}).\n"
+            "Inputs:\nannotations = {}\npredictions_high_obj = {}\npredictions_low_obj = {}\nCheck impact of objectness on loss.\n"
+            "Code used:\n{}\n******\n".format(loss_low["total_loss"], loss_high["total_loss"], annotations, predictions_high_obj, predictions_low_obj, code_used)
+        )
+
+    def test_all_highly_overlapping_boxes_are_computed(self):
+        """
+        Test that compute() accumulates loss from all predicted boxes overlapping a ground truth.
+        Example:
+          - Two identical predictions overlapping [10,10,20,20].
+          - One prediction overlapping [10,10,20,20].
+        Expected:
+          - Total loss for two predictions must be greater than for one.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          predictions_two = [[
+              [10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1],
+              [10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1]
+          ]]
+          predictions_one = [[[10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1]]]
+        """
+        code_used = TestLoss.test_all_highly_overlapping_boxes_are_computed.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        predictions_two = [[
+            [10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1],
+            [10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1]
+        ]]
+        predictions_one = [[[10, 10, 20, 20, 0.1, 0.8, 0.1, 0.1]]]
+        loss_two = self.loss.compute(predictions_two, annotations)
+        loss_one = self.loss.compute(predictions_one, annotations)
+        
+        self.assertGreaterEqual(
+            loss_two["total_loss"], loss_one["total_loss"],
+            "\n******\nTest: test_all_highly_overlapping_boxes_are_computed\nFunction: compute()\n"
+            "Error: Expected total_loss for two overlapping predictions ({}) to exceed that for one prediction ({}).\n"
+            "Inputs:\nannotations = {}\npredictions_two = {}\npredictions_one = {}\nEnsure all overlaps contribute to the loss.\n"
+            "Code used:\n{}\n******\n".format(loss_two["total_loss"], loss_one["total_loss"], annotations, predictions_two, predictions_one, code_used)
+        )
+
+    def test_non_overlapping_boxes_do_not_contribute(self):
+        """
+        Test that compute() ignores predicted boxes not overlapping the ground truth.
+        Example:
+          - Overlapping prediction: [10,10,20,20]
+          - Non-overlapping prediction: [100,100,110,110]
+        Expected:
+          - The objectness loss for true detections (conf_loss_obj) remains unchanged when a non-overlapping prediction is added.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          overlapping_pred = [10, 10, 20, 20, 0.9, 0.8, 0.1, 0.1]
+          non_overlapping_pred = [100, 100, 110, 110, 0.9, 0.8, 0.1, 0.1]
+        """
+        code_used = TestLoss.test_non_overlapping_boxes_do_not_contribute.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        overlapping_pred = [10, 10, 20, 20, 0.9, 0.8, 0.1, 0.1]
+        non_overlapping_pred = [100, 100, 110, 110, 0.9, 0.8, 0.1, 0.1]
+        predictions_overlap_only = [[overlapping_pred]]
+        predictions_combined = [[overlapping_pred, non_overlapping_pred]]
+        loss_overlap = self.loss.compute(predictions_overlap_only, annotations)
+        loss_combined = self.loss.compute(predictions_combined, annotations)
+        
+        self.assertAlmostEqual(
+            loss_overlap["conf_loss_obj"], loss_combined["conf_loss_obj"], places=6,
+            msg="\n******\nTest: test_non_overlapping_boxes_do_not_contribute\nFunction: compute()\n"
+            "Error: Expected conf_loss_obj to remain unchanged when adding non-overlapping predictions.\n"
+            "Inputs:\nannotations = {}\nwith overlapping_pred = {} and non_overlapping_pred = {}\n"
+            "Got conf_loss_obj: {} (overlap only) vs. {} (combined).\nPlease check overlap handling in loss computation.\n"
+            "Code used:\n{}\n******\n".format(annotations, overlapping_pred, non_overlapping_pred, loss_overlap["conf_loss_obj"], loss_combined["conf_loss_obj"], code_used)
+        )
+
+    def test_loss_increases_with_bbox_shift(self):
+        """
+        Test that compute() yields a higher loss when the predicted bounding box shifts from the ground truth.
+        Example:
+          - Perfect match: [10,10,20,20]
+          - Shifted prediction: [12,10,22,20] (shifted 2 pixels horizontally)
+        Expected:
+          - A shifted box yields higher localization loss and higher total loss.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          prediction_perfect = [10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]
+          prediction_shifted = [12, 10, 22, 20, 0.9, 0.9, 0.05, 0.05]
+        """
+        code_used = TestLoss.test_loss_increases_with_bbox_shift.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        prediction_perfect = [10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]
+        prediction_shifted = [12, 10, 22, 20, 0.9, 0.9, 0.05, 0.05]
+        predictions_perfect = [[prediction_perfect]]
+        predictions_shifted = [[prediction_shifted]]
+        loss_perfect = self.loss.compute(predictions_perfect, annotations)
+        loss_shifted = self.loss.compute(predictions_shifted, annotations)
+        
+        self.assertGreater(
+            loss_shifted["total_loss"], loss_perfect["total_loss"],
+            "\n******\nTest: test_loss_increases_with_bbox_shift\nFunction: compute()\n"
+            "Error: Expected total_loss for shifted prediction ({}) to exceed that for perfect prediction ({}).\n"
+            "Inputs:\nannotations = {}\nprediction_perfect = {}\nprediction_shifted = {}\nReview localization loss calculation.\n"
+            "Code used:\n{}\n******\n".format(loss_shifted["total_loss"], loss_perfect["total_loss"], annotations, prediction_perfect, prediction_shifted, code_used)
+        )
+        self.assertGreater(
+            loss_shifted["loc_loss"], loss_perfect["loc_loss"],
+            "\n******\nTest: test_loss_increases_with_bbox_shift\nFunction: compute()\n"
+            "Error: Expected loc_loss for shifted prediction ({}) to be higher than for perfect prediction ({}).\n"
+            "Inputs:\nannotations = {}\nprediction_perfect = {}\nprediction_shifted = {}\nCheck box regression impact.\n"
+            "Code used:\n{}\n******\n".format(loss_shifted["loc_loss"], loss_perfect["loc_loss"], annotations, prediction_perfect, prediction_shifted, code_used)
+        )
+
+    def test_loss_increases_when_true_object_objectness_is_low(self):
+        """
+        Test that compute() yields a higher loss for a true object when its predicted objectness is low.
+        Example:
+          - High objectness: [10,10,20,20,0.9,0.9,0.05,0.05]
+          - Low objectness:  [10,10,20,20,0.0,0.9,0.05,0.05]
+        Expected:
+          - Lower objectness increases the objectness loss (conf_loss_obj) and total loss.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          prediction_high_obj = [10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]
+          prediction_low_obj = [10, 10, 20, 20, 0.0, 0.9, 0.05, 0.05]
+        """
+        code_used = TestLoss.test_loss_increases_when_true_object_objectness_is_low.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        prediction_high_obj = [10, 10, 20, 20, 0.9, 0.9, 0.05, 0.05]
+        prediction_low_obj = [10, 10, 20, 20, 0.0, 0.9, 0.05, 0.05]
+        predictions_high = [[prediction_high_obj]]
+        predictions_low = [[prediction_low_obj]]
+        loss_high = self.loss.compute(predictions_high, annotations)
+        loss_low = self.loss.compute(predictions_low, annotations)
+        
+        self.assertGreater(
+            loss_low["total_loss"], loss_high["total_loss"],
+            "\n******\nTest: test_loss_increases_when_true_object_objectness_is_low\nFunction: compute()\n"
+            "Error: Expected total_loss for low objectness ({}) to be greater than for high objectness ({}).\n"
+            "Inputs:\nannotations = {}\nprediction_high_obj = {}\nprediction_low_obj = {}\nExamine objectness contribution to total loss.\n"
+            "Code used:\n{}\n******\n".format(loss_low["total_loss"], loss_high["total_loss"], annotations, prediction_high_obj, prediction_low_obj, code_used)
+        )
+        self.assertGreater(
+            loss_low["conf_loss_obj"], loss_high["conf_loss_obj"],
+            "\n******\nTest: test_loss_increases_when_true_object_objectness_is_low\nFunction: compute()\n"
+            "Error: Expected conf_loss_obj for low objectness ({}) to exceed that for high objectness ({}).\n"
+            "Inputs:\nannotations = {}\nprediction_high_obj = {}\nprediction_low_obj = {}\nReview objectness loss calculation.\n"
+            "Code used:\n{}\n******\n".format(loss_low["conf_loss_obj"], loss_high["conf_loss_obj"], annotations, prediction_high_obj, prediction_low_obj, code_used)
+        )
+
+    def test_false_positive_objectness_loss(self):
+        """
+        Test that compute() yields a significantly higher no-object loss (conf_loss_noobj) when a false positive has high objectness.
+        Example:
+          - False positive with near-zero objectness: [30,30,40,40,0.0,0.1,0.1,0.8]
+          - False positive with high objectness: [30,30,40,40,0.9,0.1,0.1,0.8]
+        Expected:
+          - The no-object loss for the high objectness false positive should be significantly higher.
+        Code used:
+          annotations = [[0, 10, 10, 20, 20]]
+          false_pred_low = [30,30,40,40,0.0,0.1,0.1,0.8]
+          false_pred_high = [30,30,40,40,0.9,0.1,0.1,0.8]
+        """
+        code_used = TestLoss.test_false_positive_objectness_loss.__doc__
+        annotations = [[0, 10, 10, 20, 20]]
+        false_pred_low = [30, 30, 40, 40, 0.0, 0.1, 0.1, 0.8]
+        false_pred_high = [30, 30, 40, 40, 0.9, 0.1, 0.1, 0.8]
+        predictions_low = [[false_pred_low]]
+        predictions_high = [[false_pred_high]]
+        loss_low = self.loss.compute(predictions_low, annotations)
+        loss_high = self.loss.compute(predictions_high, annotations)
+        
+        self.assertGreater(
+            loss_high["conf_loss_noobj"], loss_low["conf_loss_noobj"],
+            "\n******\nTest: test_false_positive_objectness_loss\nFunction: compute()\n"
+            "Error: The computed no-object loss (conf_loss_noobj) for a false positive with high objectness "
+            "is not greater than that for a false positive with near-zero objectness.\n"
+            "Inputs used:\n  annotations: {}\n  false_pred_low: {}\n  false_pred_high: {}\n"
+            "Computed losses:\n  conf_loss_noobj (low objectness): {}\n  conf_loss_noobj (high objectness): {}\n"
+            "Details: A false positive with a higher objectness score should incur a larger penalty in the no-object loss term.\n"
+            "Please review the handling of objectness in the loss computation.\n"
+            "Code used:\n{}\n******\n".format(annotations, false_pred_low, false_pred_high, loss_low["conf_loss_noobj"], loss_high["conf_loss_noobj"], code_used)
+        )
+
+###############################################################################
+# Tests for HardNegativeMining (-5pts for each failed test)
+###############################################################################
+class TestHardNegativeMinerWithFullLoss(unittest.TestCase):
+
+    def setUp(self):
+        self.mock_model = mock.MagicMock()
+        self.mock_nms = mock.MagicMock()
+        self.mock_measure = mock.MagicMock()
+        self.mock_measure.columns = [
+            'total_loss', 'loc_loss', 'conf_loss_obj', 'conf_loss_noobj', 'class_loss'
+        ]
+
+        self.miner = HardNegativeMiner(
+            model=self.mock_model,
+            nms=self.mock_nms,
+            measure=self.mock_measure,
+            dataset_dir="mock_dataset"
+        )
+
+        # Disable actual table construction
+        self.miner._HardNegativeMiner__construct_table = mock.MagicMock()
+
+    def set_mock_table(self, rows):
+        self.miner.table = pd.DataFrame(rows)
+
+    def test_sample_by_total_loss(self):
+        self.set_mock_table([
+            {'image_file': 'a.jpg', 'annotation_file': 'a.txt',
+             'total_loss': 0.3, 'loc_loss': 0.1, 'conf_loss_obj': 0.05,
+             'conf_loss_noobj': 0.05, 'class_loss': 0.1},
+            {'image_file': 'b.jpg', 'annotation_file': 'b.txt',
+             'total_loss': 0.9, 'loc_loss': 0.4, 'conf_loss_obj': 0.2,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.2}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        self.assertEqual(df.iloc[0]['total_loss'], 0.9)
+        self.assertEqual(df.iloc[0]['loc_loss'], 0.4)
+
+    def test_all_loss_components_exist(self):
+        self.set_mock_table([
+            {'image_file': 'x.jpg', 'annotation_file': 'x.txt',
+             'total_loss': 0.5, 'loc_loss': 0.2, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.1}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        for col in self.mock_measure.columns:
+            self.assertIn(col, df.columns)
+
+    def test_sorting_by_class_loss(self):
+        self.set_mock_table([
+            {'image_file': 'a.jpg', 'annotation_file': 'a.txt',
+             'total_loss': 0.5, 'loc_loss': 0.1, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.05},
+            {'image_file': 'b.jpg', 'annotation_file': 'b.txt',
+             'total_loss': 0.4, 'loc_loss': 0.1, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.2}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'class_loss')
+        self.assertEqual(df.iloc[0]['class_loss'], 0.2)
+
+    def test_equal_total_loss(self):
+        self.set_mock_table([
+            {'image_file': f'img{i}.jpg', 'annotation_file': f'img{i}.txt',
+             'total_loss': 0.5, 'loc_loss': 0.1, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.2}
+            for i in range(3)
+        ])
+        df = self.miner.sample_hard_negatives(2, 'total_loss')
+        self.assertEqual(len(df), 2)
+        self.assertTrue((df['total_loss'] == 0.5).all())
+
+    def test_negative_loss_values(self):
+        self.set_mock_table([
+            {'image_file': 'img.jpg', 'annotation_file': 'img.txt',
+             'total_loss': -0.3, 'loc_loss': -0.1,
+             'conf_loss_obj': 0.0, 'conf_loss_noobj': -0.05, 'class_loss': -0.15}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        self.assertEqual(df.iloc[0]['total_loss'], -0.3)
+        self.assertLess(df.iloc[0]['loc_loss'], 0)
+
+    def test_zero_loss_values(self):
+        self.set_mock_table([
+            {'image_file': 'img.jpg', 'annotation_file': 'img.txt',
+             'total_loss': 0.0, 'loc_loss': 0.0,
+             'conf_loss_obj': 0.0, 'conf_loss_noobj': 0.0, 'class_loss': 0.0}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        self.assertEqual(df.iloc[0]['total_loss'], 0.0)
+        self.assertTrue((df.iloc[0][self.mock_measure.columns] == 0.0).all())
+
+    def test_different_criteria_change_order(self):
+        self.set_mock_table([
+            {'image_file': 'img1.jpg', 'annotation_file': 'img1.txt',
+             'total_loss': 0.6, 'loc_loss': 0.4, 'conf_loss_obj': 0.05,
+             'conf_loss_noobj': 0.05, 'class_loss': 0.1},
+            {'image_file': 'img2.jpg', 'annotation_file': 'img2.txt',
+             'total_loss': 0.5, 'loc_loss': 0.9, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.1}
+        ])
+        df_total = self.miner.sample_hard_negatives(1, 'total_loss')
+        df_loc = self.miner.sample_hard_negatives(1, 'loc_loss')
+        self.assertNotEqual(df_total.iloc[0]['image_file'], df_loc.iloc[0]['image_file'])
+
+    def test_fewer_than_requested(self):
+        self.set_mock_table([
+            {'image_file': 'x.jpg', 'annotation_file': 'x.txt',
+             'total_loss': 0.4, 'loc_loss': 0.1, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.05, 'class_loss': 0.15}
+        ])
+        df = self.miner.sample_hard_negatives(3, 'total_loss')
+        self.assertEqual(df.shape[0], 1)
+
+    def test_invalid_column(self):
+        self.set_mock_table([
+            {'image_file': 'x.jpg', 'annotation_file': 'x.txt', 'total_loss': 0.4}
+        ])
+        with self.assertRaises(KeyError):
+            self.miner.sample_hard_negatives(1, 'nonexistent_metric')
+
+    def test_preserves_metadata_columns(self):
+        self.set_mock_table([
+            {'image_file': 'img.jpg', 'annotation_file': 'ann.txt', 'tag': 'hard',
+             'total_loss': 0.9, 'loc_loss': 0.2, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.5}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        self.assertIn('tag', df.columns)
+        self.assertEqual(df.iloc[0]['tag'], 'hard')
+
+    def test_data_types_preserved(self):
+        self.set_mock_table([
+            {'image_file': 'img.jpg', 'annotation_file': 'ann.txt',
+             'total_loss': 0.9, 'loc_loss': 0.1, 'conf_loss_obj': 0.1,
+             'conf_loss_noobj': 0.1, 'class_loss': 0.6}
+        ])
+        df = self.miner.sample_hard_negatives(1, 'total_loss')
+        self.assertIsInstance(df.iloc[0]['total_loss'], float)
 
 ###############################################################################
 # DummyVideoCapture for Preprocessing Tests
@@ -52,361 +570,8 @@ class DummyVideoCapture:
     def release(self):
         pass
 
-
 ###############################################################################
-# Tests for Detector
-###############################################################################
-class TestDetector(unittest.TestCase):
-    def setUp(self):
-        # Create a temporary file for class labels.
-        self.temp_class_file = tempfile.NamedTemporaryFile(delete=False, mode="w+t")
-        # Write a few class labels.
-        self.classes = ["barcode",
-                        "car",
-                        "cardboard box",
-                        "fire",
-                        "forklift",
-                        "freight container",
-                        "gloves",
-                        "helmet",
-                        "ladder",
-                        "license plate",
-                        "person",
-                        "qr code",
-                        "road sign",
-                        "safety vest",
-                        "smoke",
-                        "traffic cone",
-                        "traffic light",
-                        "truck",
-                        "van",
-                        "wood pallet"]
-        self.temp_class_file.write("\n".join(self.classes))
-        self.temp_class_file.flush()
-        self.temp_class_file.close()
-
-    def tearDown(self):
-        os.unlink(self.temp_class_file.name)
-
-    def test_predict_with_empty_frame_raises_error(self):
-        """
-        Test that passing an empty frame to predict raises an error.
-        
-        Code used:
-            dummy_frame = np.empty((0, 0, 3), dtype=np.uint8)
-            with patch("cv2.dnn.readNet") as mock_readNet:
-                dummy_net = MagicMock()
-                dummy_net.getLayerNames.return_value = []
-                dummy_net.forward.return_value = []
-                mock_readNet.return_value = dummy_net
-                detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                                      "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                                      self.temp_class_file.name, score_threshold=0.5)
-                detector.predict(dummy_frame)
-        """
-        code_used = TestDetector.test_predict_with_empty_frame_raises_error.__doc__
-        dummy_frame = np.empty((0, 0, 3), dtype=np.uint8)
-        with patch("cv2.dnn.readNet") as mock_readNet:
-            dummy_net = MagicMock()
-            dummy_net.getLayerNames.return_value = []
-            dummy_net.forward.return_value = []
-            mock_readNet.return_value = dummy_net
-
-            detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                                  "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                                  self.temp_class_file.name, score_threshold=0.5)
-            with self.assertRaises(Exception, msg=f"\nTest: test_predict_with_empty_frame_raises_error\nFunction: predict()\nError: An empty frame must raise an error.\nCode used:\n{code_used}\n"):
-                detector.predict(dummy_frame)
-
-    def test_post_process_filters_and_converts_detections(self):
-        """
-        Test that post_process correctly converts bounding boxes from center-based
-        to top-left corner format and filters detections based on score_threshold.
-        
-        Code used:
-            detector.img_width = 400
-            detector.img_height = 300
-            detection1 = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.8, 0.05])
-            detection2 = np.array([0.3, 0.3, 0.1, 0.1, 0.0, 0.2, 0.1, 0.3])
-            predict_output = [np.array([detection1, detection2])]
-            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-        """
-        code_used = TestDetector.test_post_process_filters_and_converts_detections.__doc__
-        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                            self.temp_class_file.name, score_threshold=0.5)
-        detector.img_width = 400
-        detector.img_height = 300
-
-        detection1 = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.8, 0.05])
-        detection2 = np.array([0.3, 0.3, 0.1, 0.1, 0.0, 0.2, 0.1, 0.3])
-        predict_output = [np.array([detection1, detection2])]
-
-        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-
-        expected_bbox = [160, 120, 80, 60]
-        expected_class_id = 1  # argmax of [0.1, 0.8, 0.05] is index 1.
-        expected_confidence = 0.8
-        expected_class_scores = detection1[5:]
-
-        self.assertEqual(len(bboxes), 1,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected exactly 1 bounding box, got {}.\nCode used:\n{}\n******\n".format(len(bboxes), code_used))
-        self.assertEqual(len(class_ids), 1,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected exactly 1 class ID, got {}.\nCode used:\n{}\n******\n".format(len(class_ids), code_used))
-        self.assertEqual(len(confidence_scores), 1,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected exactly 1 confidence score, got {}.\nCode used:\n{}\n******\n".format(len(confidence_scores), code_used))
-        self.assertEqual(len(class_scores), 1,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected exactly 1 set of class scores, got {}.\nCode used:\n{}\n******\n".format(len(class_scores), code_used))
-
-        self.assertEqual(bboxes[0], expected_bbox,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected bounding box {} but got {}.\nCode used:\n{}\n******\n".format(expected_bbox, bboxes[0], code_used))
-        self.assertEqual(class_ids[0], expected_class_id,
-                         "\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                         "Error: Expected class ID {} but got {}.\nCode used:\n{}\n******\n".format(expected_class_id, class_ids[0], code_used))
-        self.assertAlmostEqual(confidence_scores[0], expected_confidence,
-                               msg="\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                                   "Error: Expected confidence score {} but got {}.\nCode used:\n{}\n******\n".format(expected_confidence, confidence_scores[0], code_used))
-        np.testing.assert_array_equal(class_scores[0], expected_class_scores,
-                                      err_msg="\n******\nTest: test_post_process_filters_and_converts_detections\nFunction: post_process()\n"
-                                              "Error: The class scores do not match expected values.\nCode used:\n" + code_used + "\n******\n")
-
-    def test_post_process_detection_equal_threshold(self):
-        """
-        Test that a detection with confidence exactly equal to the threshold
-        is filtered out (since the condition is strictly greater than the threshold).
-        
-        Code used:
-            detector.img_width = 400
-            detector.img_height = 300
-            detection = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.5, 0.05])
-            predict_output = [np.array([detection])]
-            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-        """
-        code_used = TestDetector.test_post_process_detection_equal_threshold.__doc__
-        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                            self.temp_class_file.name, score_threshold=0.5)
-        detector.img_width = 400
-        detector.img_height = 300
-
-        detection = np.array([0.5, 0.5, 0.2, 0.2, 0.0, 0.1, 0.5, 0.05])
-        predict_output = [np.array([detection])]
-
-        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-        self.assertEqual(bboxes, [],
-                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
-                         "Error: Expected no bounding boxes when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
-        self.assertEqual(class_ids, [],
-                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
-                         "Error: Expected no class IDs when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
-        self.assertEqual(confidence_scores, [],
-                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
-                         "Error: Expected no confidence scores when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
-        self.assertEqual(class_scores, [],
-                         "\n******\nTest: test_post_process_detection_equal_threshold\nFunction: post_process()\n"
-                         "Error: Expected no class scores when confidence equals threshold.\nCode used:\n{}\n******\n".format(code_used))
-
-    def test_post_process_multiple_outputs(self):
-        """
-        Test that post_process correctly aggregates detections when multiple outputs
-        are provided.
-        
-        Code used:
-            detector.img_width = 400
-            detector.img_height = 300
-            detection1 = np.array([0.4, 0.4, 0.2, 0.2, 0.0, 0.05, 0.7, 0.1])
-            detection2 = np.array([0.6, 0.6, 0.1, 0.1, 0.0, 0.2, 0.6, 0.1])
-            predict_output = [np.array([detection1]), np.array([detection2])]
-            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-        """
-        code_used = TestDetector.test_post_process_multiple_outputs.__doc__
-        detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                            "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                            self.temp_class_file.name, score_threshold=0.5)
-        detector.img_width = 400
-        detector.img_height = 300
-
-        detection1 = np.array([0.4, 0.4, 0.2, 0.2, 0.0, 0.05, 0.7, 0.1])
-        detection2 = np.array([0.6, 0.6, 0.1, 0.1, 0.0, 0.2, 0.6, 0.1])
-        predict_output = [np.array([detection1]), np.array([detection2])]
-
-        bboxes, class_ids, confidence_scores, class_scores = detector.post_process(predict_output, score_threshold=0.5)
-
-        expected_bbox1 = [120, 90, 80, 60]   # detection1
-        expected_bbox2 = [220, 165, 40, 30]  # detection2
-
-        self.assertEqual(len(bboxes), 2,
-                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
-                         "Error: Expected 2 bounding boxes but got {}.\nCode used:\n{}\n******\n".format(len(bboxes), code_used))
-        self.assertEqual(bboxes[0], expected_bbox1,
-                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
-                         "Error: Expected bounding box {} for detection1 but got {}.\nCode used:\n{}\n******\n".format(expected_bbox1, bboxes[0], code_used))
-        self.assertEqual(bboxes[1], expected_bbox2,
-                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
-                         "Error: Expected bounding box {} for detection2 but got {}.\nCode used:\n{}\n******\n".format(expected_bbox2, bboxes[1], code_used))
-        self.assertEqual(class_ids, [1, 1],
-                         "\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
-                         "Error: Expected class IDs [1, 1] but got {}.\nCode used:\n{}\n******\n".format(class_ids, code_used))
-        self.assertAlmostEqual(confidence_scores[0], 0.7,
-                               msg="\n******\nTest: test_post_process_multiple_outputs\nFunction: post_process()\n"
-                                   "Error: Expected confidence score 0.7 for detection1 but got {}.\nCode used:\n{}\n******\n".format(confidence_scores[0], code_used))
-
-    def test_detector_with_empty_class_file(self):
-        """
-        Test that when the class file is empty, the detector's classes list is empty.
-        
-        Code used:
-            Create an empty temporary file and pass its name to Detector.
-        """
-        code_used = TestDetector.test_detector_with_empty_class_file.__doc__
-        with tempfile.NamedTemporaryFile(delete=False, mode="w+t") as empty_file:
-            empty_file_name = empty_file.name
-        try:
-            detector = Detector("storage/yolo_models/yolov4-tiny-logistics_size_416_1.weights",
-                                "storage/yolo_models/yolov4-tiny-logistics_size_416_1.cfg",
-                                empty_file_name, score_threshold=0.5)
-            self.assertEqual(detector.classes, [],
-                             "\n******\nTest: test_detector_with_empty_class_file\nFunction: __init__()\n"
-                             "Error: Expected detector.classes to be empty when class file is empty.\nCode used:\n{}\n******\n".format(code_used))
-        finally:
-            os.unlink(empty_file_name)
-
-
-###############################################################################
-# Tests for NMS
-###############################################################################
-class TestNMS(unittest.TestCase):
-    @patch("cv2.dnn.NMSBoxes")
-    def test_filter_with_valid_indices(self, mock_nms):
-        """
-        We need to verify that when NMS returns valid indices, the filter method 
-        correctly maps them to the corresponding bounding boxes, class IDs, scores, 
-        and class-specific scores.
-        
-        Code used:
-            bboxes = [[10,10,100,100], [20,20,80,80], [15,15,90,90], [200,200,50,50]]
-            class_ids = [0, 1, 0, 2]
-            scores = [0.9, 0.75, 0.85, 0.95]
-            class_scores = [0.8, 0.6, 0.7, 0.9]
-            mock_nms.return_value = np.array([[0], [2]])
-            filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-        """
-        code_used = TestNMS.test_filter_with_valid_indices.__doc__
-        bboxes = [
-            [10, 10, 100, 100],
-            [20, 20, 80, 80],
-            [15, 15, 90, 90],
-            [200, 200, 50, 50],
-        ]
-        class_ids = [0, 1, 0, 2]
-        scores = [0.9, 0.75, 0.85, 0.95]
-        class_scores = [0.8, 0.6, 0.7, 0.9]
-
-        mock_nms.return_value = np.array([[0], [2]])
-
-        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
-        filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-
-        expected_bboxes = [bboxes[0], bboxes[2]]
-        expected_class_ids = [class_ids[0], class_ids[2]]
-        expected_scores = [scores[0], scores[2]]
-        expected_class_scores = [class_scores[0], class_scores[2]]
-
-        self.assertEqual(
-            {tuple(x) for x in filtered[0]}, {tuple(x) for x in expected_bboxes},
-            f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Filtered bounding boxes do not match expected values.\nCode used:\n{code_used}\nExpected filtered_bboxes = {expected_bboxes}\nBut got: {filtered[0]}\n"""
-        )
-        self.assertEqual(
-            set(filtered[1]), set(expected_class_ids),
-            f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Filtered class IDs do not match expected values.\nCode used:\n{code_used}\nExpected class IDs = {expected_class_ids}\nBut got: {filtered[1]}\n"""
-        )
-        for a, b in zip(sorted(filtered[2]), sorted(expected_scores)):
-            self.assertAlmostEqual(a, b, places=2,
-                                    msg=f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Detection scores mismatch.\nCode used:\n{code_used}\nExpected scores = {expected_scores}\nBut got: {filtered[2]}\nExpected score {b:.3f} but got {a:.3f}.\n""")
-        for a, b in zip(sorted(filtered[3]), sorted(expected_class_scores)):
-            self.assertAlmostEqual(a, b, places=2,
-                                    msg=f"""\nTest: test_filter_with_valid_indices\nFunction: filter()\nError: Class-specific scores mismatch.\nCode used:\n{code_used}\nExpected class scores = {expected_class_scores}\nBut got: {filtered[3]}\nExpected class score {b:.3f} but got {a:.3f}.\n""")
-
-    @patch("cv2.dnn.NMSBoxes")
-    def test_filter_with_empty_indices(self, mock_nms):
-        """
-        Verify that if cv2.dnn.NMSBoxes returns no indices, the filter method returns empty lists.
-        
-        Code used:
-            bboxes = [[10,10,100,100], [20,20,80,80]]
-            class_ids = [0, 1]
-            scores = [0.3, 0.4]
-            class_scores = [0.2, 0.3]
-            mock_nms.return_value = []
-            result = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-        """
-        code_used = TestNMS.test_filter_with_empty_indices.__doc__
-        bboxes = [[10, 10, 100, 100], [20, 20, 80, 80]]
-        class_ids = [0, 1]
-        scores = [0.3, 0.4]
-        class_scores = [0.2, 0.3]
-
-        mock_nms.return_value = []
-        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
-        result = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-        self.assertEqual(result, ([], [], [], []),
-                         f"""\nTest: test_filter_with_empty_indices\nFunction: filter()\nError: When NMSBoxes returns no indices, expected output ([], [], [], []), but got {result}.\nCode used:\n{code_used}\n""")
-
-    @patch("cv2.dnn.NMSBoxes")
-    def test_filter_with_single_index(self, mock_nms):
-        """
-        Verify that when a single index is returned, the filter method correctly returns that detection.
-        
-        Code used:
-            bboxes = [[10,10,50,50], [12,12,48,48]]
-            class_ids = [0, 0]
-            scores = [0.95, 0.94]
-            class_scores = [0.9, 0.88]
-            mock_nms.return_value = np.array([[0]])
-            filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-        """
-        code_used = TestNMS.test_filter_with_single_index.__doc__
-        bboxes = [[10, 10, 50, 50], [12, 12, 48, 48]]
-        class_ids = [0, 0]
-        scores = [0.95, 0.94]
-        class_scores = [0.9, 0.88]
-
-        mock_nms.return_value = np.array([[0]])
-        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
-        filtered = nms_instance.filter(bboxes, class_ids, scores, class_scores)
-        self.assertEqual(filtered[0], [bboxes[0]],
-                         f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected bounding box {bboxes[0]} but got {filtered[0]}.\nCode used:\n{code_used}\n""")
-        self.assertEqual(filtered[1], [class_ids[0]],
-                         f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected class ID {class_ids[0]} but got {filtered[1]}.\nCode used:\n{code_used}\n""")
-        for a, b in zip(sorted(filtered[2]), sorted([scores[0]])):
-            self.assertAlmostEqual(a, b, places=2,
-                                    msg=f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected score {scores[0]:.3f} but got {a:.3f}.\nCode used:\n{code_used}\n""")
-        for a, b in zip(sorted(filtered[3]), sorted([class_scores[0]])):
-            self.assertAlmostEqual(a, b, places=2,
-                                    msg=f"""\nTest: test_filter_with_single_index\nFunction: filter()\nError: Expected class-specific score {class_scores[0]:.3f} but got {a:.3f}.\nCode used:\n{code_used}\n""")
-
-    def test_filter_with_empty_input_lists(self):
-        """
-        Verify that empty input lists result in empty output lists.
-        
-        Code used:
-            result = nms_instance.filter([], [], [], [])
-        Expected output: ([], [], [], []).
-        """
-        code_used = TestNMS.test_filter_with_empty_input_lists.__doc__
-        nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
-        self.assertEqual(nms_instance.filter([], [], [], []), ([], [], [], []),
-                         f"""\nTest: test_filter_with_empty_input_lists\nFunction: filter()\nError: Empty input lists should yield empty output lists.\nCode used:\n{code_used}\n""")
-
-
-
-###############################################################################
-# Integration Tests for Detector and NMS using Real Images
+# Integration Tests for Detector and NMS using Real Images (-5pts for each failed test)
 ###############################################################################
 class TestDetectorIntegration(unittest.TestCase):
     def setUp(self):
@@ -455,17 +620,6 @@ class TestDetectorIntegration(unittest.TestCase):
         the indices with those returned by NMS.filter(). This test confirms that the calculations
         (conversion from center-based to top-left coordinates, scaling based on image dimensions,
         and NMS filtering) are accurately implemented.
-        
-        Code used:
-            mock_readNet.return_value = self.dummy_net
-            images_pattern = os.path.join("storage", "test_images", "*.jpg")
-            for image_file in sorted(glob.glob(images_pattern)):
-                img = cv2.imread(image_file)
-                detector = Detector(..., self.temp_class_file.name, score_threshold=0.5)
-                outputs = detector.predict(img)
-                bboxes, class_ids, confidence_scores, class_scores = detector.post_process(outputs, score_threshold=0.5)
-                nms_instance = NMS(score_threshold=0.5, nms_iou_threshold=0.4)
-                filtered = nms_instance.filter(bboxes, class_ids, confidence_scores, class_scores)
         """
         code_used = TestDetectorIntegration.test_detector_integration_with_storage_images.__doc__
         mock_readNet.return_value = self.dummy_net
@@ -487,7 +641,8 @@ class TestDetectorIntegration(unittest.TestCase):
             outputs = detector.predict(img)
             H, W = img.shape[:2]
             expected_bbox = [int(0.4 * W), int(0.4 * H), int(0.2 * W), int(0.2 * H)]
-            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(outputs, score_threshold=0.5)
+            bboxes, class_ids, confidence_scores, class_scores = detector.post_process(outputs)
+
             self.assertGreaterEqual(len(bboxes), 1,
                                     f"\nTest: test_detector_integration_with_storage_images\nFunction: post_process()\nError: Expected at least one detection for {image_file}.\nCode used:\n{code_used}\n")
             self.assertEqual(bboxes[0], expected_bbox,
@@ -510,7 +665,7 @@ class TestDetectorIntegration(unittest.TestCase):
 
 
 ###############################################################################
-# Tests for Preprocessing (using DummyVideoCapture)
+# Tests for Preprocessing (using DummyVideoCapture) (-5pts for each failed test)
 ###############################################################################
 class TestPreprocessing(unittest.TestCase):
     @patch('cv2.VideoCapture')

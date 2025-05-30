@@ -104,8 +104,8 @@ class InferenceService:
         ```
         """
         
-        # TASK 5: Implement your Inference service. Use Line 76-88 to guide you on the
-        #         logic behind this implementation. 
+        # TASK: Implement your Inference service. Use the docstrings to guide you on the
+        #       logic behind this implementation. 
 
 
 # Runner for Inference Service

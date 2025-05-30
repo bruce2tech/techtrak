@@ -50,43 +50,43 @@ jobs:
           path:  /home/runner/work/techtrack
 
 
-      - name: setup assignment 4
+      - name: setup assignment 2
         run: |
           cd $GITHUB_WORKSPACE
-          cp -rf ./assignment-4-test/* ./${{ github.repository }}/techtrack/
+          cp -rf ./assignment-2-test/* ./${{ github.repository }}/techtrack/
 
 
       # Runs unit test
-      - name: Runs all unit tests for assignment 4
+      - name: Runs all unit tests for assignment 2
         run: |
           cd $GITHUB_WORKSPACE/${{ github.repository }}/techtrack/
           python -m unittest -v unit-test.py 2> /home/runner/work/techtrack || true
 
       - name: Save output as artifact
-        id: set_output_4
+        id: set_output_2
         uses: actions/upload-artifact@v4
         with:
-          name:  techtrack-4
+          name:  techtrack-2
           path:  /home/runner/work/techtrack
 
 
 
 
-      - name: setup assignment 5
-        run: |
-          cd $GITHUB_WORKSPACE
-          cp -rf ./assignment-5-test/* ./${{ github.repository }}/techtrack/
-          pip install -r ./${{ github.repository }}/techtrack/requirements.txt
+      #- name: setup assignment 5
+      #  run: |
+      #    cd $GITHUB_WORKSPACE
+      #    cp -rf ./assignment-5-test/* ./${{ github.repository }}/techtrack/
+      #    pip install -r ./${{ github.repository }}/techtrack/requirements.txt
 
       # Runs unit test
-      - name: Runs all unit tests for assignment 5
-        run: |
-          cd $GITHUB_WORKSPACE/${{ github.repository }}/techtrack/
-          python -m unittest -v unit-test.py 2> /home/runner/work/techtrack || true
+      #- name: Runs all unit tests for assignment 5
+      #  run: |
+      #    cd $GITHUB_WORKSPACE/${{ github.repository }}/techtrack/
+      #    python -m unittest -v unit-test.py 2> /home/runner/work/techtrack || true
 
-      - name: Save output as artifact
-        id: set_output_5
-        uses: actions/upload-artifact@v4
-        with:
-          name:  techtrack-5
-          path:  /home/runner/work/techtrack
+      #- name: Save output as artifact
+      #  id: set_output_5
+      #  uses: actions/upload-artifact@v4
+      #  with:
+      #    name:  techtrack-5
+      #    path:  /home/runner/work/techtrack
