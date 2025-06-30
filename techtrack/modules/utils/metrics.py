@@ -89,15 +89,6 @@ def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes
           - "combined": Use the element-wise product of the objectness and classification scores. (See example below)
         Default is "class_scores".
 
-        Example
-        -------
-        >>> if eval_type == "objectness":
-        >>>     y_pred = score
-        >>> elif eval_type == "class_scores":
-        >>>     y_pred = cls_score
-        >>> elif eval_type == "combined":
-        >>>     y_pred = np.multiply(score, cls_score)
-
     Returns
     -------
     y_true : list
@@ -113,28 +104,15 @@ def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes
     - The function uses IoU matching to determine whether a detection sufficiently overlaps with a ground truth box.
     - The specific handling of scores (e.g., weighting by objectness and/or classification) is determined by the eval_type.
 
-    Example
-    -------
-    >>> boxes = [[(50, 50, 100, 100), (200, 200, 80, 80)]]
-    >>> classes = [[0, 1]]
-    >>> scores = [[0.9, 0.85]]
-    >>> cls_scores = [[0.95, 0.88]]
-    >>> gt_boxes = [[(48, 48, 100, 100), (205, 205, 75, 75)]]
-    >>> gt_classes = [[0, 1]]
-    >>> map_iou_threshold = 0.5
-    >>> y_true, pred_scores = evaluate_detections(boxes, classes, scores, cls_scores,
-    ...                                           gt_boxes, gt_classes, map_iou_threshold, eval_type="class_scores")
-    >>> print(y_true)
-    [0, 1, ...]
-    >>> print(pred_scores)
-    [[0.95, 0.88, ...],
-     [0.20, 0.80, ...],
-     [...., ...., ...]]
     """
     y_true = []
     pred_scores = []
 
+
+    #todo
+
     ### Task 1: Evaluate detections by matching predicted bounding boxes 
+
     #           with ground truth boxes and generate corresponding true 
     #           labels and prediction scores for further evaluation (e.g., 
     #           computing mAP).
@@ -197,20 +175,6 @@ def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
       false positives, and false negatives are updated, and the corresponding precision and recall are computed.
     - This function assumes that higher predicted scores correspond to a higher likelihood that the sample
       belongs to the class.
-
-    Examples
-    --------
-    >>> y_true = [0, 1, 2, 1, 0]
-    >>> pred_scores = [[0.9, 0.05, 0.05],
-    ...                [0.1, 0.8, 0.1],
-    ...                [0.05, 0.1, 0.85],
-    ...                [0.2, 0.7, 0.1],
-    ...                [0.8, 0.1, 0.1]]
-    >>> precision, recall, thresholds = calculate_precision_recall_curve(y_true, pred_scores, num_classes=3)
-    >>> print(precision[0])
-    [ ... ]
-    >>> print(recall[0])
-    [ ... ]
     
     Returns the precision, recall values, and thresholds for each class based on the provided predictions.
     """
@@ -219,7 +183,10 @@ def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
     recall = {}
     thresholds = {}
 
+
+    # todo
     ### Task 2: Compute the precision-recall curve for each class 
+
     #           in a multi-class classification task. 
     #           Notes
     #           -----
@@ -273,19 +240,6 @@ def calculate_map_x_point_interpolated(precision_recall_points, num_classes, num
          - If no points exist for a given threshold, assign a precision of 0 for that threshold.
       3. Compute the average precision for the class as the mean of these interpolated precision values.
     Finally, compute the overall mAP as the mean of the average precisions across all classes.
-
-    Example
-    -------
-    >>> # Assume precision_recall_points for 3 classes are given as follows:
-    >>> precision_recall_points = {
-    ...     0: [(0.0, 1.0), (0.5, 0.8), (1.0, 0.6)],
-    ...     1: [(0.0, 0.9), (0.3, 0.7), (0.7, 0.5), (1.0, 0.4)],
-    ...     2: [(0.0, 0.95), (0.6, 0.85), (1.0, 0.75)]
-    ... }
-    >>> num_classes = 3
-    >>> map_value = calculate_map_x_point_interpolated(precision_recall_points, num_classes)
-    >>> print(map_value)
-    0.7  # (for example, actual value depends on interpolation)
 
     Returns
     -------

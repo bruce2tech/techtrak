@@ -134,6 +134,8 @@ class HardNegativeMiner:
         Returns:
             DataFrame: A DataFrame containing the sampled hard negative examples.
         """
-        self.__construct_table()
-        self.table.sort_values(by=criteria, inplace=True, ascending=False)
-        return self.table.head(num_hard_negatives)
+        
+        # TASK: Complete this method to rank the hard samples.
+
+        
+        pass
