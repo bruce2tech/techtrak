@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from typing import List, Tuple
+import os
 
 
 class Detector:
@@ -22,6 +23,25 @@ class Detector:
         :ivar self.img_height: Height of the input image/frame.
         :ivar self.img_width: Width of the input image/frame.
         """
+
+        # Determine project root relative to this file
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+        # Resolve and verify each provided path
+        def resolve(path: str) -> str:
+            if os.path.isabs(path):
+                return path
+            candidate = os.path.join(base_dir, path)
+            return candidate if os.path.isfile(candidate) else path
+
+        self.weights_path = resolve(weights_path)
+        self.config_path  = resolve(config_path)
+        self.class_path   = resolve(class_path)
+
+        for path in (weights_path, config_path, class_path):
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"File not found: {path}")
+        
         self.net = cv2.dnn.readNet(weights_path, config_path)
 
         # Load class labels
@@ -58,6 +78,19 @@ class Detector:
           https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob
         """
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
+        # Create a blob and run a forward pass through the network
+        blob = cv2.dnn.blobFromImage(
+            preprocessed_frame,
+            scalefactor=1/255.0,
+            size=(self.img_width, self.img_height),
+            mean=(0, 0, 0),
+            swapRB=True,
+            crop=False
+        )
+        self.net.setInput(blob)
+        layer_names = self.net.getUnconnectedOutLayersNames()
+        outputs = self.net.forward(layer_names)
+        return outputs
 
         # TASK 2: Use the YOLO model to return all raw outputs
         
@@ -104,7 +137,38 @@ class Detector:
         - OpenCV YOLO Documentation: 
           https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob
         """
-        
+        bboxes: List[List[int]] = []
+        class_ids: List[int] = []
+        confidence_scores: List[float] = []
+        class_scores: List[np.ndarray] = []
+
+        # Iterate over each detection block
+        for output in predict_output:
+            for detection in output:
+                # First 4: box, 5th: objectness, rest: class probabilities
+                scores = detection[5:]
+                class_id = int(np.argmax(scores))
+                objectness = float(detection[4])
+                class_confidence = float(scores[class_id])
+                final_score = objectness * class_confidence
+
+                # Filter by score threshold
+                if final_score >= self.score_threshold:
+                    # Convert center-based coords to top-left
+                    cx = int(detection[0] * self.img_width)
+                    cy = int(detection[1] * self.img_height)
+                    w = int(detection[2] * self.img_width)
+                    h = int(detection[3] * self.img_height)
+                    x = int(cx - w / 2)
+                    y = int(cy - h / 2)
+
+                    bboxes.append([x, y, w, h])
+                    class_ids.append(class_id)
+                    confidence_scores.append(final_score)
+                    class_scores.append(scores)
+
+        return bboxes, class_ids, confidence_scores, class_scores
+
         # TASK 3: Use the YOLO model to return list of NumPy arrays filtered
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
@@ -113,6 +177,63 @@ class Detector:
         # Return these variables in order:
         # return bboxes, class_ids, confidence_scores, class_scores
 
+
+
+    def process_video(
+        self,
+        input_path: str,
+        output_path: str = None
+    ) -> None:
+        """
+        Runs detection on each frame of an input video file, optionally writing annotated output.
+
+        :param input_path: Path to the input .mp4 video file.
+        :param output_path: Optional path for saving the output video with detections.
+        """
+        cap = cv2.VideoCapture(input_path)
+        if not cap.isOpened():
+            raise IOError(f"Cannot open video: {input_path}")
+
+        writer = None
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        if output_path:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            # Run detection
+            outputs = self.predict(frame)
+            bboxes, class_ids, scores, _ = self.post_process(outputs)
+
+            # Draw results
+            for (x, y, w, h), cid, conf in zip(bboxes, class_ids, scores):
+                label = f"{self.classes[cid]}: {conf:.2f}"
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(
+                    frame, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 0), 1
+                )
+
+            # Write or show frame
+            if writer:
+                writer.write(frame)
+            else:
+                cv2.imshow('Detections', frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+        cap.release()
+        if writer:
+            writer.release()
+        else:
+            cv2.destroyAllWindows()
 
 """
 EXAMPLE USAGE:
