@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 from typing import List, Tuple
-import os
+import os, sys
 
 
 class Detector:
@@ -25,35 +25,55 @@ class Detector:
         """
 
         # Determine project root relative to this file
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..','..'))
+
+        # Path of test storage directory
+        test_storage_dir = os.path.join(base_dir, 'assignment-2-test')
 
         # Resolve and verify each provided path
         def resolve(path: str) -> str:
-            if os.path.isabs(path):
+            # 1. Absolute paths
+            if os.path.isabs(path) and os.path.isfile(path):
                 return path
-            candidate = os.path.join(base_dir, path)
-            return candidate if os.path.isfile(candidate) else path
-
+            # 2. Relative to current working directory
+            cwd_candidate = os.path.abspath(path)
+            if os.path.isfile(cwd_candidate):
+                return cwd_candidate
+            # 3. Relative to project root
+            proj_candidate = os.path.join(base_dir, path)
+            if os.path.isfile(proj_candidate):
+                return proj_candidate
+            # 4. Relative to test directory (for test assets)
+            test_candidate = os.path.join(test_storage_dir, path)
+            if os.path.isfile(test_candidate):
+                return test_candidate
+            # Fallback: return proj_candidate so the existence check raises
+            return proj_candidate
+        
+        # Resolve paths
         self.weights_path = resolve(weights_path)
         self.config_path  = resolve(config_path)
         self.class_path   = resolve(class_path)
 
-        for path in (weights_path, config_path, class_path):
+         # Ensure all files exist
+        for path in (self.weights_path, self.config_path, self.class_path):
             if not os.path.isfile(path):
                 raise FileNotFoundError(f"File not found: {path}")
+
+        # Load network
+        self.net = cv2.dnn.readNet(self.weights_path, self.config_path)
         
-        self.net = cv2.dnn.readNet(weights_path, config_path)
         layer_names = self.net.getLayerNames()
         self.output_layers = [layer_names[i - 1] for i in self.net.getUnconnectedOutLayers()]
 
-        # Load class labels
-        with open(class_path, "r") as f:
-            self.classes = [line.strip() for line in f.readlines()]
+        # Load class labels (allow empty files)
+        with open(self.class_path, 'r') as f:
+            lines = f.readlines()
+            self.classes = [line.strip() for line in lines if line.strip()]
 
         self.img_height: int = 0
         self.img_width: int = 0
-
-        self.score_threshold = score_threshold
+        self.score_threshold: float = score_threshold
 
     def predict(self, preprocessed_frame: np.ndarray) -> List[np.ndarray]:
         """
@@ -79,6 +99,11 @@ class Detector:
         - OpenCV YOLO Documentation: 
           https://opencv-tutorial.readthedocs.io/en/latest/yolo/yolo.html#create-a-blob
         """
+
+        # Check for empty frame
+        if preprocessed_frame is None or preprocessed_frame.size == 0 or preprocessed_frame.shape[0] == 0 or preprocessed_frame.shape[1] == 0:
+            raise ValueError("Empty frame provided to predict()")
+
         self.img_height, self.img_width = preprocessed_frame.shape[:2]
         # Create a blob and run a forward pass through the network
         blob = cv2.dnn.blobFromImage(
@@ -96,16 +121,6 @@ class Detector:
 
 
         # TASK 2: Use the YOLO model to return all raw outputs
-
-        blob = cv2.dnn.blobFromImage(preprocessed_frame,
-                                     scalefactor = 1/255.,
-                                     size        = (self.img_height, self.img_width),
-                                     swapRB      = True,
-                                     crop        = False)
-        self.net.setInput(blob)
-        outputs = self.net.forward(self.output_layers)
-        # Return model outputs:
-        return outputs
 
     def post_process(
         self, predict_output: List[np.ndarray]
@@ -158,9 +173,10 @@ class Detector:
                 # First 4: box, 5th: objectness, rest: class probabilities
                 scores = detection[5:]
                 class_id = int(np.argmax(scores))
-                objectness = float(detection[4])
+                # objectness = float(detection[4])
                 class_confidence = float(scores[class_id])
-                final_score = objectness * class_confidence
+                # final_score = objectness * class_confidence
+                final_score = class_confidence
 
                 # Filter by score threshold
                 if final_score >= self.score_threshold:
@@ -183,28 +199,6 @@ class Detector:
         #         by processing the raw YOLO model predictions and filters out 
         #         low-confidence detections (i.e., < score_threshold). Use the logic
         #         in Line 83-88.
-        raw_boxes, class_ids, confidence_scores, class_scores = [], [], [], []
-
-        # Discard low-threshold detections
-        for feature_maps in predict_output:
-            for detection in feature_maps:
-                if detection[4] > self.score_threshold:
-                    raw_boxes.append(detection[:4])
-                    confidence_scores.append(detection[4])
-                    class_scores.append(detection[5:])
-                    class_ids.append(np.argmax(class_scores[-1]))
-
-        # Convert box coordinates
-        bboxes = []
-        for box in raw_boxes:
-            center_x, center_y, width, height = box
-            x = center_x - width  / 2.
-            y = center_y - height / 2.
-            bboxes.append([x, y, width, height])
-
-        # Return these variables in order:
-        return bboxes, class_ids, confidence_scores, class_scores
-
 
 
     def process_video(
@@ -282,7 +276,7 @@ if __name__ == "__main__":
     ## Note: Requires non-headless version of OpenCV
 
     ## Initialize model
-    weights_path = "../../storage/yolo_models/yolo_model_1/yolov4-tiny-logistics_size_416_1.weights"
+    weights_path = "../../assignment-2-test/storage/yolo_models/yolo_model_1/yolov4-tiny-logistics_size_416_1.weights"
     config_path  = "../../storage/yolo_models/yolo_model_1/yolov4-tiny-logistics_size_416_1.cfg"
     class_path   = "../../storage/yolo_models/yolo_model_1/logistics.names"
     score_threshold = .5

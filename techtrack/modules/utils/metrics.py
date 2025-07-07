@@ -1,7 +1,8 @@
 import numpy as np
 from sklearn.preprocessing import label_binarize
+from typing import List, Tuple, Any
 
-def calculate_iou(boxA, boxB):
+def calculate_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
     """
     Calculate the Intersection over Union (IoU) between two bounding boxes.
 
@@ -20,7 +21,7 @@ def calculate_iou(boxA, boxB):
       7. Calculate the union area as the sum of the two bounding box areas minus the intersection area.
       8. Finally, compute the IoU by dividing the intersection area by the union area. If the union area is zero,
          the function returns 0 to avoid division by zero.
-
+ 
     Parameters
     ----------
     boxA : tuple
@@ -35,10 +36,40 @@ def calculate_iou(boxA, boxB):
         The IoU value, which is the ratio of the intersection area over the union area.
         The value ranges from 0 to 1, where 0 indicates no overlap and 1 indicates perfect overlap.
     """
-    pass
+    # pass
+
+    xA, yA, wA, hA = boxA
+    xB, yB, wB, hB = boxB
+    # convert to (x1,y1,x2,y2)
+    x1A, y1A, x2A, y2A = xA, yA, xA + wA, yA + hA
+    x1B, y1B, x2B, y2B = xB, yB, xB + wB, yB + hB
+    # intersection
+    xi1 = max(x1A, x1B)
+    yi1 = max(y1A, y1B)
+    xi2 = min(x2A, x2B)
+    yi2 = min(y2A, y2B)
+    inter_w = max(0, xi2 - xi1)
+    inter_h = max(0, yi2 - yi1)
+    inter_area = inter_w * inter_h
+    # union
+    areaA = wA * hA
+    areaB = wB * hB
+    union = areaA + areaB - inter_area
+    if union == 0:
+        return 0.0
+    return inter_area / union
 
 
-def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes, map_iou_threshold, eval_type="class_scores"):
+def evaluate_detections(
+    boxes: List[List[Tuple[int,int,int,int]]],
+    classes: List[List[int]],
+    scores: List[List[float]],
+    cls_scores: List[List[np.ndarray]],
+    gt_boxes: List[List[Tuple[int,int,int,int]]],
+    gt_classes: List[List[int]],
+    map_iou_threshold: float,
+    eval_type: str = "class_scores"
+    ) -> Tuple[List[int], List[np.ndarray]]:
     """
     Evaluate detections by matching predicted bounding boxes with ground truth boxes and generate
     corresponding true labels and prediction scores for further evaluation (e.g., computing mAP).
@@ -105,8 +136,58 @@ def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes
     - The specific handling of scores (e.g., weighting by objectness and/or classification) is determined by the eval_type.
 
     """
-    y_true = []
-    pred_scores = []
+    """
+    Match detections to ground truth across images; generate y_true labels and pred_scores vectors.
+    """
+    
+    y_true: List[int] = []
+    pred_scores: List[np.ndarray] = []
+    # iterate images
+    for dets, labs, scrs, cls_scrs, t_boxes, t_classes in zip(
+        boxes, classes, scores, cls_scores, gt_boxes, gt_classes
+    ):
+        # Build IoU matrix between dets and t_boxes
+        dets_arr = np.array(dets, float)
+        t_arr = np.array(t_boxes, float)
+        iou_mat = np.zeros((len(dets), len(t_boxes)), float)
+        for i, db in enumerate(dets_arr):
+            for j, tb in enumerate(t_arr):
+                iou_mat[i, j] = calculate_iou(db, tb)
+
+        matched_gt = set()
+
+        # For each detection, decide TP vs FP
+        for i, (lab, scr, cls_vec) in enumerate(zip(labs, scrs, cls_scrs)):
+            # find best GT match
+            best_j = np.argmax(iou_mat[i])
+            best_iou = iou_mat[i, best_j]
+            if best_iou >= map_iou_threshold and lab == t_classes[best_j] and best_j not in matched_gt:
+                # True Positive
+                y_true.append(lab)
+                matched_gt.add(best_j)
+            else:
+                # False Positive
+                y_true.append(-1)
+
+            # decide what score to record
+            if eval_type == "objectness":
+                pred_scores.append(np.array([scr]))
+            elif eval_type == "class_scores":
+                pred_scores.append(cls_vec)
+            else:  # combined
+                pred_scores.append(cls_vec * scr)
+
+        # Now add False Negatives for any unmatched GTs
+        for j, gt_cls in enumerate(t_classes):
+            if j not in matched_gt:
+                y_true.append(gt_cls)
+                # assign a negative score so it never counts as positive
+                if eval_type == "objectness":
+                    pred_scores.append(np.array([-1.0]))
+                else:
+                    pred_scores.append(-np.ones_like(cls_scrs[0]))
+
+    return y_true, pred_scores
 
 
     #todo
@@ -124,10 +205,11 @@ def evaluate_detections(boxes, classes, scores, cls_scores, gt_boxes, gt_classes
     #     and/or classification) is determined by the eval_type.
 
 
-    return y_true, pred_scores
-
-
-def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
+def calculate_precision_recall_curve(
+    y_true: List[int],
+    pred_scores: List[np.ndarray],
+    num_classes: int = 20
+) -> Tuple[dict, dict, dict]:
     """
     Compute the precision-recall curve for each class in a multi-class classification task.
 
@@ -178,11 +260,41 @@ def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
     
     Returns the precision, recall values, and thresholds for each class based on the provided predictions.
     """
+    # stack scores
+    scores_arr = np.vstack(pred_scores)
     y_true_bin = label_binarize(y_true, classes=np.arange(num_classes))
     precision = {}
     recall = {}
     thresholds = {}
-
+    # for each class
+    for c in range(num_classes):
+        cls_scores = scores_arr[:, c]
+        # sort thresholds
+        desc_idx = np.argsort(cls_scores)[::-1]
+        t_scores = cls_scores[desc_idx]
+        t_labels = y_true_bin[desc_idx, c]
+        # unique thresholds only (no zero)
+        thresh = np.concatenate((np.unique(t_scores), [0.0]))[::-1]
+        precision_list = []
+        recall_list = []
+        tp = fp = fn = 0
+        P = np.sum(y_true_bin[:, c])
+        TP = 0
+        FP = 0
+        for thr in thresh:
+            # decide positives
+            preds = cls_scores >= thr
+            TP = np.sum((preds == 1) & (y_true_bin[:, c] == 1))
+            FP = np.sum((preds == 1) & (y_true_bin[:, c] == 0))
+            FN = P - TP
+            prec = TP / (TP + FP) if (TP + FP) > 0 else 1.0
+            rec = TP / P if P > 0 else 0.0
+            precision_list.append(prec)
+            recall_list.append(rec)
+        precision[c] = precision_list
+        recall[c] = recall_list
+        thresholds[c] = thresh
+    return precision, recall, thresholds
 
     # todo
     ### Task 2: Compute the precision-recall curve for each class 
@@ -196,10 +308,6 @@ def calculate_precision_recall_curve(y_true, pred_scores, num_classes=20):
     #             false positives, and false negatives are updated, and the corresponding precision and recall are computed.
     #           - This function assumes that higher predicted scores correspond to a higher likelihood that the sample
     #             belongs to the class.
-
-    
-    return precision, recall, thresholds
-
 
 def calculate_map_x_point_interpolated(precision_recall_points, num_classes, num_interpolated_points=11):
     """
