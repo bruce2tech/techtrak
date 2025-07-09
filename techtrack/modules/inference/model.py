@@ -25,7 +25,7 @@ class Detector:
         """
 
         # Determine project root relative to this file
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..','..'))
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 
         # Path of test storage directory
         test_storage_dir = os.path.join(base_dir, 'assignment-2-test')

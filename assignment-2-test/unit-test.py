@@ -6,7 +6,6 @@ import cv2
 import inspect
 from unittest.mock import patch, MagicMock
 
-
 # Replace these with your actual module paths.
 from modules.inference.nms import NMS
 from modules.inference.model import Detector
