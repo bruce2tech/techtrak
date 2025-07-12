@@ -106,6 +106,34 @@ class InferenceService:
         
         # TASK: Implement your Inference service. Use the docstrings to guide you on the
         #       logic behind this implementation. 
+        if self.save_dir:
+            os.makedirs(self.save_dir, exist_ok=True)
+
+        frame_count = 0
+        # iterate frames from the preprocessing module
+        for frame in self.stream.capture_video():
+            frame_count += 1
+
+            # 1) Run detection (raw YOLO outputs)
+            raw_preds = self.detector.predict(frame)
+
+            # 2) Post-process to get boxes, class IDs, objectness scores, and class_scores
+            bboxes, class_ids, obj_scores, class_scores = self.detector.post_process(raw_preds)
+
+            # 3) Filter via NMS
+            if bboxes:
+                bboxes, class_ids, obj_scores, class_scores = self.nms.filter(
+                    bboxes, class_ids, obj_scores, class_scores
+                )
+
+            # 4) Print detections for this frame
+            print(f"[FRAME {frame_count}] Detections:")
+            for (x, y, w, h), cid, score in zip(bboxes, class_ids, obj_scores):
+                print(f"  Box=({x},{y},{w},{h})  Class={cid}  Score={score:.3f}")
+
+            # 5) Draw boxes on a copy and save
+            annotated = self.draw_boxes(frame.copy(), bboxes, class_ids, obj_scores)
+            self.save_frame(annotated, frame_count)
 
 
 # Runner for Inference Service

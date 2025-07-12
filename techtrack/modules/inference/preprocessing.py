@@ -48,7 +48,7 @@ class Preprocessing:
         - OpenCV VideoCapture Documentation: 
           https://docs.opencv.org/4.x/dd/d43/tutorial_py_video_display.html
         """
-        # TASK: Modify file to yield only every `drop_rate`-th frame.
+        # TASK 1: Modify file to yield only every `drop_rate`-th frame.
         # HINT: When running in Docker avoid using:
         # -----------------------------
         # cv.imshow('frame', gray)
@@ -63,8 +63,22 @@ class Preprocessing:
         if not cap.isOpened():
             raise ValueError(f"Error: Unable to open video file '{self.filename}'.")
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            yield frame
+        frame_idx = 0
+        try:
+            while True:
+                ret, frame = cap.read()
+                # End of stream
+                if not ret:
+                    break
 
-        cap.release()
+                # Yield only every drop_rate-th frame
+                if frame_idx % self.drop_rate == 0:
+                    yield frame
+
+                frame_idx += 1
+
+                # Avoid tight loops building up backlogs:
+                # immediately proceed to next read, no buffering here.
+
+        finally:
+            cap.release()

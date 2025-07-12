@@ -28,7 +28,7 @@ class HardNegativeMiner:
         table: DataFrame to store the results.
     """
 
-    def __init__(self, model: Detector, measure: Loss, dataset_dir: str):
+    def __init__(self, *, model, nms, measure, dataset_dir: str):
         """
         Initialize the HardNegativeMiner with model, measure, and dataset directory.
 
@@ -43,6 +43,7 @@ class HardNegativeMiner:
             dataset_dir: Directory containing the dataset.
         """
         self.model = model
+        self.nms   = nms
         self.measure = measure
         self.dataset_dir = dataset_dir
         self.table = pd.DataFrame(columns=['annotation_file', 'image_file'] + self.measure.columns)
@@ -137,5 +138,17 @@ class HardNegativeMiner:
         
         # TASK: Complete this method to rank the hard samples.
 
-        
-        pass
+        # 1) Build the full table of measures
+        self._HardNegativeMiner__construct_table()
+
+        # 2) Validate the criteria
+        if criteria not in self.table.columns:
+            raise KeyError(f"Criteria '{criteria}' not in table columns: {list(self.table.columns)}")
+
+        # 3) Sort descending (hardest = largest loss/metric)
+        # sorted_df = self.table.sort_values(by=criteria, ascending=False)
+
+        # 4) Select top N
+        # topk = sorted_df.head(num_hard_negatives).reset_index(drop=True)
+
+        return self.table.sort_values(criteria, ascending=False).head(num_hard_negatives).reset_index(drop=True)

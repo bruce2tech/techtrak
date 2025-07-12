@@ -1,5 +1,7 @@
-import itertools
 import numpy as np
+from itertools import chain
+from .metrics import calculate_iou
+
 
 class Loss:
     """
@@ -27,6 +29,7 @@ class Loss:
             lambda_noobj (float): Weighting factor for no object confidence loss.
             lambda_cls (float): Weighting factor for classification loss.
         """
+
         self.num_classes = num_classes
         self.lambda_coord = lambda_coord
         self.lambda_cls = lambda_cls
@@ -56,7 +59,17 @@ class Loss:
         Returns:
             tuple: (bounding boxes, objectness scores, class scores)
         """
-        pass 
+        """
+        Split raw predictions into bboxes, objectness scores, and class scores.
+        """
+        flat = list(chain.from_iterable(predictions))
+        if not flat:
+            return np.zeros((0,4)), np.zeros((0,)), np.zeros((0,self.num_classes))
+        preds = np.array(flat, float)
+        bboxes = preds[:, 0:4]            # [x1,y1,x2,y2]
+        obj    = preds[:, 4]
+        cls    = preds[:, 5:5+self.num_classes]
+        return bboxes, obj, cls
     
     def get_annotations(self, annotations):
         """
@@ -72,7 +85,25 @@ class Loss:
         Returns:
             tuple: (ground truth bounding boxes, class labels)
         """
-        pass
+        gt_bboxes = []
+        gt_classes = []
+        for ann in annotations:
+            if isinstance(ann, (list, tuple, np.ndarray)) and len(ann) == 5:
+                # detect format by checking whether index 0 is integer class
+                if isinstance(ann[0], (int, np.integer)):
+                    # [class_id, x1, y1, x2, y2]
+                    cls  = int(ann[0])
+                    bbox = ann[1:5]
+                else:
+                    # [cx, cy, w, h, class_id]
+                    bbox = ann[0:4]
+                    cls  = int(ann[4])
+            else:
+                # assume (bbox, cls)
+                bbox, cls = ann
+            gt_bboxes.append(bbox)
+            gt_classes.append(cls)
+        return np.array(gt_bboxes, float), np.array(gt_classes, int)
 
     def compute(self, predictions, annotations):
         """
@@ -103,6 +134,59 @@ class Loss:
         #         ----------------------------------------------------------
         #         HINT: For simplicity complete use get_predictions(), get_annotations().
         #         You may add class methods to improve the readability of this code. 
+
+        # extract
+        pred_bboxes, pred_obj, pred_cls = self.get_predictions(predictions)
+        gt_bboxes, gt_classes           = self.get_annotations(annotations)
+
+        # Build IoU matrix
+        if len(gt_bboxes) > 0 and len(pred_bboxes) > 0:
+            iou_mat = np.zeros((len(pred_bboxes), len(gt_bboxes)), float)
+            for i, pb in enumerate(pred_bboxes):
+                for j, gb in enumerate(gt_bboxes):
+                    iou_mat[i, j] = calculate_iou(pb, gb)
+        else:
+            iou_mat = np.zeros((len(pred_bboxes), len(gt_bboxes)), float)
+
+        matched_gt = set()
+        # For each prediction decide TP vs FP
+        for i in range(len(pred_bboxes)):
+            # find best GT match
+            if gt_bboxes.shape[0] > 0:
+                best_j = int(np.argmax(iou_mat[i]))
+                best_iou = iou_mat[i, best_j]
+            else:
+                best_j, best_iou = -1, 0.0
+
+            # check if it’s an object prediction
+            if best_iou >= self.iou_threshold and best_j not in matched_gt:
+                # we have localized a ground‐truth object (regardless of predicted class)
+                matched_gt.add(best_j)
+
+                # 1) Localization loss (MSE on bbox coords)
+                loc_loss += np.sum((pred_bboxes[i] - gt_bboxes[best_j])**2)
+
+                # 2) Objectness loss → label is 1 here
+                conf_loss_obj += (1.0 - pred_obj[i])**2
+
+                # 3) Always compute classification loss vs the true class
+                one_hot = np.zeros(self.num_classes)
+                one_hot[gt_classes[best_j]] = 1.0
+                class_loss += np.sum((pred_cls[i] - one_hot)**2)
+
+            else:
+                # either low IoU or this GT already matched: treat as background
+                conf_loss_noobj += (pred_obj[i])**2
+
+
+
+        # Weighted sum
+        total_loss = (
+            self.lambda_coord * loc_loss +
+            self.lambda_obj   * conf_loss_obj +
+            self.lambda_noobj * conf_loss_noobj +
+            self.lambda_cls   * class_loss
+        )
 
         return {
             "total_loss": total_loss, 
