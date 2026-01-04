@@ -59,7 +59,7 @@ def calculate_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, in
         return 0.0
     return inter_area / union
 
-
+ 
 def evaluate_detections(
     boxes: List[List[Tuple[int,int,int,int]]],
     classes: List[List[int]],
@@ -68,8 +68,9 @@ def evaluate_detections(
     gt_boxes: List[List[Tuple[int,int,int,int]]],
     gt_classes: List[List[int]],
     map_iou_threshold: float,
-    eval_type: str = "class_scores"
-    ) -> Tuple[List[int], List[np.ndarray]]:
+    eval_type: str = "class_scores",
+    num_classes: int = None
+) -> Tuple[List[int], List[np.ndarray]]:
     """
     Evaluate detections by matching predicted bounding boxes with ground truth boxes and generate
     corresponding true labels and prediction scores for further evaluation (e.g., computing mAP).
@@ -183,9 +184,19 @@ def evaluate_detections(
                 y_true.append(gt_cls)
                 # assign a negative score so it never counts as positive
                 if eval_type == "objectness":
-                    pred_scores.append(np.array([-1.0]))
+                    pred_scores.append(np.array([0.0]))
                 else:
-                    pred_scores.append(-np.ones_like(cls_scrs[0]))
+                    if len(cls_scrs) > 0:
+                        # same shape as a real class_scores vector
+                        pred_scores.append(-np.ones_like(cls_scrs[0]))
+                    elif num_classes is not None:
+                        # build a dummy vector of length=num_classes
+                        pred_scores.append(np.zeros(num_classes))
+                    else:
+                        raise ValueError(
+                            "No detections to infer class_scores shape; "
+                            "pass num_classes to evaluate_detections."
+                        )
 
     return y_true, pred_scores
 

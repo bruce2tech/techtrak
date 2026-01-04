@@ -152,3 +152,47 @@ class HardNegativeMiner:
         # topk = sorted_df.head(num_hard_negatives).reset_index(drop=True)
 
         return self.table.sort_values(criteria, ascending=False).head(num_hard_negatives).reset_index(drop=True)
+    
+    def build_table(self):
+        """Public wrapper to build the measures table once."""
+        if self.table.empty:
+            self._HardNegativeMiner__construct_table()
+        return self.table
+
+    def lambda_sweep(self, lambdas, pos_ref="gt"):
+        """
+        Compute N_neg_kept for each image across a list of λ values.
+
+        Args:
+            lambdas (list[float]): e.g., [1,2,3,5,10]
+            pos_ref (str): 'gt' to use N_gt, 'tp' to use N_tp
+
+        Returns:
+            pd.DataFrame with columns:
+            [image_file, annotation_file, lambda, N_gt, N_tp, N_neg_avail, N_neg_kept, sum_hardness_kept, pos_ref]
+        """
+        self.build_table()
+        rows = []
+        for _, row in self.table.iterrows():
+            N_gt = int(row.get("N_gt", 0))
+            N_tp = int(row.get("N_tp", 0))
+            N_neg_avail = int(row.get("N_neg_avail", 0))
+            neg_hard = row.get("neg_hardness_desc", []) or []
+            # neg_hard is already sorted desc by Loss.compute
+
+            for lam in lambdas:
+                N_pos_ref = max(N_tp if pos_ref == "tp" else N_gt, 1)  # avoid zero
+                k = min(int(lam * N_pos_ref), N_neg_avail)
+                sum_hard = float(np.sum(neg_hard[:k])) if k > 0 else 0.0
+                rows.append({
+                    "image_file": row["image_file"],
+                    "annotation_file": row["annotation_file"],
+                    "lambda": float(lam),
+                    "N_gt": N_gt,
+                    "N_tp": N_tp,
+                    "N_neg_avail": N_neg_avail,
+                    "N_neg_kept": int(k),
+                    "sum_hardness_kept": sum_hard,
+                    "pos_ref": pos_ref,
+                })
+        return pd.DataFrame(rows)

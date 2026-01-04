@@ -40,7 +40,11 @@ class Loss:
             'loc_loss', 
             'conf_loss_obj', 
             'conf_loss_noobj', 
-            'class_loss'
+            'class_loss',
+            'N_gt',
+            'N_tp',
+            'N_neg_avail',
+            'neg_hardness_desc'
         ]
         self.iou_threshold = iou_threshold
     
@@ -149,6 +153,9 @@ class Loss:
             iou_mat = np.zeros((len(pred_bboxes), len(gt_bboxes)), float)
 
         matched_gt = set()
+        neg_hardness = []   # collect background "hardness" (use objectness^2 as hardness)
+        tp_count = 0
+
         # For each prediction decide TP vs FP
         for i in range(len(pred_bboxes)):
             # find best GT match
@@ -162,6 +169,7 @@ class Loss:
             if best_iou >= self.iou_threshold and best_j not in matched_gt:
                 # we have localized a ground‐truth object (regardless of predicted class)
                 matched_gt.add(best_j)
+                tp_count += 1
 
                 # 1) Localization loss (MSE on bbox coords)
                 loc_loss += np.sum((pred_bboxes[i] - gt_bboxes[best_j])**2)
@@ -172,14 +180,14 @@ class Loss:
                 # 3) Always compute classification loss vs the true class
                 one_hot = np.zeros(self.num_classes)
                 one_hot[gt_classes[best_j]] = 1.0
-                class_loss += np.sum((pred_cls[i] - one_hot)**2)
+                class_loss += float(np.sum((pred_cls[i] - one_hot)**2))
 
             else:
-                # either low IoU or this GT already matched: treat as background
-                conf_loss_noobj += (pred_obj[i])**2
+                # background prediction → candidate negative
+                # hardness proxy: model thinks "object" where there isn't one
+                neg_hardness.append(float(pred_obj[i]**2))
 
-
-
+        conf_loss_noobj = float(np.sum(neg_hardness)) if neg_hardness else 0.0
         # Weighted sum
         total_loss = (
             self.lambda_coord * loc_loss +
@@ -187,11 +195,16 @@ class Loss:
             self.lambda_noobj * conf_loss_noobj +
             self.lambda_cls   * class_loss
         )
-
+        # sort negatives once so the miner can slice top-k quickly
+        neg_hardness_desc = sorted(neg_hardness, reverse=True)
         return {
             "total_loss": total_loss, 
             "loc_loss": loc_loss, 
             "conf_loss_obj": conf_loss_obj, 
             "conf_loss_noobj": conf_loss_noobj, 
-            "class_loss": class_loss
+            "class_loss": class_loss,
+            "N_gt": int(len(gt_bboxes)),
+            "N_tp": int(tp_count),
+            "N_neg_avail": int(len(neg_hardness_desc)),
+            "neg_hardness_desc": neg_hardness_desc
         }

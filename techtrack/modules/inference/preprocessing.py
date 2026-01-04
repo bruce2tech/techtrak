@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import subprocess
 from typing import Generator
 
 
@@ -25,60 +26,47 @@ class Preprocessing:
         self.filename = filename
         self.drop_rate = drop_rate
 
-    def capture_video(self) -> Generator[np.ndarray, None, None]:
-        """
-        Captures frames from a video file and yields every nth frame.
+    def capture_video(self):
+        # Probe width/height using ffprobe (works for files & UDP streams)
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=p=0",
+            self.filename
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            raise ValueError(f"Error probing '{self.filename}': {res.stderr.strip()}")
+        width, height = map(int, res.stdout.strip().split(","))
 
-        :return: A generator yielding frames as NumPy arrays.
-
-        **Functionality:**
-        - Opens a video file using OpenCV.
-        - Iterates through each frame.
-        - Yields every `drop_rate`-th frame.
-        - Releases the video resource when finished.
-
-        **Usage Example:**
-        ```python
-        video_processor = Preprocessing("video.mp4", drop_rate=10)
-        for frame in video_processor.capture_video():
-            process_frame(frame)  # Custom processing function (...think Detector Methods!)
-        ```
-
-        **Reference:**
-        - OpenCV VideoCapture Documentation: 
-          https://docs.opencv.org/4.x/dd/d43/tutorial_py_video_display.html
-        """
-        # TASK 1: Modify file to yield only every `drop_rate`-th frame.
-        # HINT: When running in Docker avoid using:
-        # -----------------------------
-        # cv.imshow('frame', gray)
-        # if cv.waitKey(1) == ord('q'):
-        #     break
-        # -----------------------------
-        # The standard Docker Engine does not support graphic displays, 
-        # unless configured to do so.
-
-        cap = cv2.VideoCapture(self.filename)
-
-        if not cap.isOpened():
-            raise ValueError(f"Error: Unable to open video file '{self.filename}'.")
+        # 2) Launch ffmpeg subprocess to read from self.filename
+        cmd = [
+            "ffmpeg",
+            "-nostdin",
+            "-listen", "1",
+            "-i", self.filename,
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-vf", f"fps=30",        # or choose a frame rate
+            "pipe:1"
+        ]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        frame_size = width * height * 3
 
         frame_idx = 0
         try:
             while True:
-                ret, frame = cap.read()
-                # End of stream
-                if not ret:
+                # read raw bytes for one frame
+                raw = p.stdout.read(frame_size)
+                if not raw:
                     break
+                frame = np.frombuffer(raw, np.uint8).reshape((height, width, 3))
 
-                # Yield only every drop_rate-th frame
+                # drop frames according to drop_rate
                 if frame_idx % self.drop_rate == 0:
                     yield frame
-
                 frame_idx += 1
-
-                # Avoid tight loops building up backlogs:
-                # immediately proceed to next read, no buffering here.
-
         finally:
-            cap.release()
+            p.stdout.close()
+            p.wait()

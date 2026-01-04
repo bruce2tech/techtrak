@@ -1,1 +1,62 @@
+# Storage and large files
 /techtrack/storage/*
+logistics/
+logistics(1).zip
+test_videos(1).zip
+test_videos/
+yolo_model_1(1).zip
+yolo_model_2(1).zip
+yolo_model_2(1)/
+*.zip
+
+# YOLO model weights (large files)
+*.weights
+yolo_model_1/
+techtrack/yolo_model_1/
+
+# Output directories
+output/
+hnm_out/
+techtrack/modules/viz_out/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# OS files
+.DS_Store
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files
+*.pkl
+*.json
+!requirements.json
+
+# Generated images (keep a few examples, exclude the rest)
+techtrack/modules/comparison_*.png
+techtrack/modules/pr_curve_*.png
+techtrack/modules/confmat_*.png
+techtrack/modules/single_class_*.png
+techtrack/modules/per_class_*.png
+techtrack/modules/F1_*.png
+
+# Excel files
+*.xlsx
+*.numbers
+
+# Test directories
+techtrack/modules/test/
+
+# Assignment test cache
+assignment-2-test/__pycache__/
+assignment-3-test/__pycache__/

@@ -141,7 +141,8 @@ if __name__ == "__main__":
     print("[INFO] Starting Inference Service...")
 
     # Initialize Video Processing
-    VIDEO_SOURCE = "udp://127.0.0.1:23000"
+    # VIDEO_SOURCE = "udp://127.0.0.1:23000"
+    VIDEO_SOURCE = os.getenv("VIDEO_SOURCE", "udp://0.0.0.0:23000?listen")
     print(f"[INFO] Initializing video stream from source: {VIDEO_SOURCE}")
     stream = Preprocessing(VIDEO_SOURCE, drop_rate=60)
 
