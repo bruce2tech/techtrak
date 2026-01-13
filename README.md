@@ -29,19 +29,26 @@ The system can detect the following 20 classes:
 
 ```
 techtrack/
-├── app.py                      # Main inference service
-├── Dockerfile                  # Container configuration
+├── app.py                          # Main inference service
+├── Dockerfile                      # Container configuration
+├── CaseStudy.md                    # Comprehensive model analysis report
+├── requirements.txt                # Python dependencies
 ├── modules/
-│   ├── inference/              # Core detection pipeline
-│   │   ├── model.py           # YOLO detector
-│   │   ├── nms.py             # Non-Maximum Suppression
-│   │   └── preprocessing.py   # Video stream processing
-│   ├── rectification/          # Model improvement
-│   │   └── hard_negative_mining.py
-│   └── utils/                  # Evaluation utilities
-│       ├── metrics.py         # Performance metrics
-│       └── loss.py            # Loss functions
-└── storage/                    # Model weights and videos
+│   ├── inference/                  # Core detection pipeline
+│   │   ├── model.py                # YOLO detector (OpenCV DNN)
+│   │   ├── nms.py                  # Non-Maximum Suppression
+│   │   └── preprocessing.py        # Video stream processing
+│   ├── rectification/              # Model improvement techniques
+│   │   ├── hard_negative_mining.py # HNM implementation
+│   │   ├── augmentation.py         # Data augmentation
+│   │   └── run_hnm_sweep.py        # HNM hyperparameter tuning
+│   ├── utils/                      # Evaluation utilities
+│   │   ├── metrics.py              # Performance metrics (AP, F1, ROC-AUC)
+│   │   └── loss.py                 # Loss functions
+│   ├── eval_compare*.py            # Model comparison scripts
+│   ├── viz_metrics.py              # Metrics visualization
+│   └── load_and_compute_metrics.py # Metrics computation
+└── storage/                        # Model weights and videos
     └── yolo_models/
 ```
 
@@ -57,63 +64,74 @@ This guide will help you build and run the Docker-packaged YOLO-based Inference 
   - `yolov4-tiny-logistics_size_416_1.cfg`
   - `logistics.names`
 
-# 1. Clone the Repository
-    '''
-    bash
-    git clone <your-repo-url>
-    cd project-techtrak-bruce2tech
-    '''
-# 2. Install Docker
-    Install [Docker Desktop](https://www.docker.com/products/docker-desktop) for your platform and ensure it’s running.
+### 1. Clone the Repository
+```bash
+git clone https://github.com/bruce2tech/techtrak.git
+cd techtrak
+```
 
-# 2. FFmpeg (with ffplay)
-   - **macOS (with Homebrew):**  
-     ```bash
-     brew install ffmpeg
-     ```  
-     This provides `ffmpeg`, `ffprobe`, and `ffplay`.  
-   - **Linux (Debian/Ubuntu):**  
-     ```bash
-     sudo apt update
-     sudo apt install -y ffmpeg
-     ```  
-   - **Verify installation:**  
-     ```bash
-     ffmpeg -version
-     ffplay -version
-     ```
+### 2. Install Docker
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop) for your platform and ensure it's running.
 
+### 3. Install FFmpeg (with ffplay)
 
+**macOS (with Homebrew):**
+```bash
+brew install ffmpeg
+```
 
-# 4. Build the Docker Image
-# From the project root (where your Dockerfile lives), build:
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt update
+sudo apt install -y ffmpeg
+```
+
+**Verify installation:**
+```bash
+ffmpeg -version
+ffplay -version
+```
+
+### 4. Build the Docker Image
+```bash
 docker build -t techtrack-inference:latest .
+```
 
-
-# 4. Run the service
+### 5. Run the Service
+```bash
 docker run --rm \
-  -v $(pwd)/
-  storage:/app/storage \
-  -v $(pwd)/output:/app/output \
-  techtrack-inference:latest
-
-
-
-docker run --rm \
-  -e VIDEO_SOURCE="udp://0.0.0.0:12345" \
-# Or for a local MP4:
-# e VIDEO_SOURCE="/app/storage/videos/sample.mp4" \
   -v $(pwd)/storage:/app/storage \
   -v $(pwd)/output:/app/output \
   techtrack-inference:latest
+```
 
+**With UDP video source:**
+```bash
+docker run --rm \
+  -e VIDEO_SOURCE="udp://0.0.0.0:12345" \
+  -v $(pwd)/storage:/app/storage \
+  -v $(pwd)/output:/app/output \
+  techtrack-inference:latest
+```
 
-output/frame_<frame_number>.jpg
+**With local video file:**
+```bash
+docker run --rm \
+  -e VIDEO_SOURCE="/app/storage/videos/sample.mp4" \
+  -v $(pwd)/storage:/app/storage \
+  -v $(pwd)/output:/app/output \
+  techtrack-inference:latest
+```
 
-# 5. Start your UDP video stream
+### 6. Start a UDP Video Stream (for testing)
+```bash
+# In one terminal - start the player
 ffplay udp://127.0.0.1:23000
+
+# In another terminal - stream the video
 ffmpeg -re -i ./test_videos/worker-zone-detection.mp4 \
   -r 30 -vcodec mpeg4 -f mpegts udp://127.0.0.1:23000
+```
 
 ## Evaluation and Analysis
 
@@ -158,18 +176,36 @@ Each frame includes:
 
 ## Technologies Used
 
-- **Object Detection**: YOLOv4-tiny
-- **Deep Learning**: PyTorch, OpenCV
-- **Video Processing**: FFmpeg, cv2
+- **Object Detection**: YOLOv4-tiny (via OpenCV DNN module)
+- **Computer Vision**: OpenCV (cv2)
+- **Video Processing**: FFmpeg
 - **Containerization**: Docker
-- **Metrics**: NumPy, scikit-learn, matplotlib
-- **Backend**: Python 3.9
+- **Metrics & Visualization**: NumPy, scikit-learn, matplotlib, seaborn
+- **Backend**: Python 3.9+
 
-## Performance Highlights
+## Performance Results
 
-Based on comprehensive evaluation:
+Based on comprehensive evaluation (see [CaseStudy.md](techtrack/CaseStudy.md) for detailed analysis):
+
+### Model Comparison
+
+| Model | mAP@0.5 | Improvement |
+|-------|--------:|------------:|
+| YOLOv4-tiny1 (baseline) | 0.532 | - |
+| **YOLOv4-tiny2** | **0.589** | **+10.7%** |
+
+### Top Performing Classes (YOLOv4-tiny2)
+
+| Class | AP@0.5 | F1@0.5 | ROC-AUC |
+|-------|-------:|-------:|--------:|
+| QR code | 0.823 | 0.893 | 0.934 |
+| wood pallet | 0.788 | 0.862 | 0.894 |
+| traffic cone | 0.776 | 0.852 | 0.895 |
+| forklift | 0.753 | 0.820 | 0.876 |
+| van | 0.751 | 0.757 | 0.909 |
+
+### System Performance
 - **Real-time processing** at 30 FPS on standard hardware
-- **mAP@0.5**: 0.85+ across 20 classes
 - **NMS optimization** reduces false positives by 40%
 - **Hard negative mining** improves difficult class detection by 15-20%
 
@@ -229,8 +265,9 @@ This project is for educational and portfolio purposes.
 
 See `techtrack/requirements.txt` for full dependency list. Key requirements:
 - Python 3.9+
-- PyTorch
 - OpenCV (cv2)
 - NumPy
+- pandas
 - matplotlib
 - scikit-learn
+- FFmpeg (system dependency)

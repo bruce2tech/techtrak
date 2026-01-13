@@ -201,21 +201,6 @@ def evaluate_detections(
     return y_true, pred_scores
 
 
-    #todo
-
-    ### Task 1: Evaluate detections by matching predicted bounding boxes 
-
-    #           with ground truth boxes and generate corresponding true 
-    #           labels and prediction scores for further evaluation (e.g., 
-    #           computing mAP).
-    #   Notes
-    #   -----
-    #   - The function uses IoU matching to determine whether a detection 
-    #     sufficiently overlaps with a ground truth box.
-    #   - The specific handling of scores (e.g., weighting by objectness 
-    #     and/or classification) is determined by the eval_type.
-
-
 def calculate_precision_recall_curve(
     y_true: List[int],
     pred_scores: List[np.ndarray],
@@ -307,18 +292,6 @@ def calculate_precision_recall_curve(
         thresholds[c] = thresh
     return precision, recall, thresholds
 
-    # todo
-    ### Task 2: Compute the precision-recall curve for each class 
-
-    #           in a multi-class classification task. 
-    #           Notes
-    #           -----
-    #           - The true labels are first binarized using `label_binarize` from scikit-learn to facilitate
-    #             per-class evaluation.
-    #           - The precision and recall are computed iteratively: for each threshold, the counts of true positives,
-    #             false positives, and false negatives are updated, and the corresponding precision and recall are computed.
-    #           - This function assumes that higher predicted scores correspond to a higher likelihood that the sample
-    #             belongs to the class.
 
 def calculate_map_x_point_interpolated(precision_recall_points, num_classes, num_interpolated_points=11):
     """
