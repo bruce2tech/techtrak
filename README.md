@@ -72,9 +72,13 @@ techtrak/
 │   └── utils/                  # Evaluation tools
 │       ├── metrics.py          # AP, F1, ROC-AUC computation
 │       └── loss.py             # Loss functions
-└── storage/
-    └── yolo_models/            # Model weights and configs
+├── storage/
+│   ├── videos/                 # Input video files (.mp4)
+│   └── yolo_models/            # Model weights and configs
+└── output/                     # Processed frames with detections
 ```
+
+> **Note**: Model weights and sample videos are available in the [GitHub Release](https://github.com/bruce2tech/techtrak/releases).
 
 ## Detected Object Classes
 
@@ -98,7 +102,7 @@ The system detects 20 logistics-relevant classes:
   - `yolov4-tiny-logistics_size_416_1.weights`
   - `yolov4-tiny-logistics_size_416_1.cfg`
   - `logistics.names`
-
+- Download the YOLO model files and video https://github.com/bruce2tech/techtrak/releases/tag/Model_and_videos
 ### Build and Run
 
 ```bash
@@ -110,7 +114,7 @@ docker build -t techtrak-inference:latest .
 
 # Run with local video file
 docker run --rm \
-  -e VIDEO_SOURCE="/app/storage/videos/sample.mp4" \
+  -e VIDEO_SOURCE="/app/storage/videos/Safety_Full_Hat_and_Vest.mp4" \
   -v $(pwd)/storage:/app/storage \
   -v $(pwd)/output:/app/output \
   techtrak-inference:latest
@@ -130,10 +134,10 @@ docker run --rm \
 ffplay udp://127.0.0.1:23000
 
 # Terminal 2: Stream test video
-ffmpeg -re -i ./test_videos/worker-zone-detection.mp4 \
+ffmpeg -re -i ./storage/videos/sample.mp4 \
   -r 30 -vcodec mpeg4 -f mpegts udp://127.0.0.1:23000
 ```
-
+Note: This will stream the video and save the detections, but does not display detections while streaming.
 ## Output
 
 Processed frames are saved to `output/` with:

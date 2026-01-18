@@ -26,31 +26,37 @@ class Preprocessing:
         self.filename = filename
         self.drop_rate = drop_rate
 
+    def _is_stream(self) -> bool:
+        """Check if the source is a network stream (UDP/TCP) vs a local file."""
+        return self.filename.startswith(("udp://", "tcp://", "rtsp://", "http://", "https://"))
+
     def capture_video(self):
+        is_stream = self._is_stream()
+
         # Probe width/height using ffprobe (works for files & UDP streams)
-        cmd = [
+        probe_cmd = [
             "ffprobe", "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "stream=width,height",
             "-of", "csv=p=0",
             self.filename
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True)
+        res = subprocess.run(probe_cmd, capture_output=True, text=True)
         if res.returncode != 0:
             raise ValueError(f"Error probing '{self.filename}': {res.stderr.strip()}")
         width, height = map(int, res.stdout.strip().split(","))
 
-        # 2) Launch ffmpeg subprocess to read from self.filename
-        cmd = [
-            "ffmpeg",
-            "-nostdin",
-            "-listen", "1",
+        # Build ffmpeg command based on source type
+        cmd = ["ffmpeg", "-nostdin"]
+        if is_stream:
+            cmd.extend(["-listen", "1"])
+        cmd.extend([
             "-i", self.filename,
             "-f", "rawvideo",
             "-pix_fmt", "bgr24",
-            "-vf", f"fps=30",        # or choose a frame rate
+            "-vf", "fps=30",
             "pipe:1"
-        ]
+        ])
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         frame_size = width * height * 3
 
